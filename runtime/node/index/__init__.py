@@ -11,7 +11,7 @@ class NodeIndexBuilder:
     def __init__(self, store: NodeStore):
         self.store = store
 
-    def build_project_entrypoint(self, project_id: str, as_of: str) -> dict:
+    def build_project_entrypoint(self, project_id: str, as_of: str, *, persist: bool = True) -> dict:
         project = self.store.get_project(project_id)
         if not project:
             raise ValueError(f"unknown project: {project_id}")
@@ -28,5 +28,6 @@ class NodeIndexBuilder:
             "index_refs": refs,
             "generated_at": as_of,
         }
-        self.store.upsert_project_entrypoint(project_id, project["owner_node_id"], json.dumps(summary, sort_keys=True), refs)
+        if persist:
+            self.store.upsert_project_entrypoint(project_id, project["owner_node_id"], json.dumps(summary, sort_keys=True), refs)
         return {"entrypoint": summary, "indexes": indexes}

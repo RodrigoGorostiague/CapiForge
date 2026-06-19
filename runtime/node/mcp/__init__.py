@@ -77,6 +77,13 @@ class NodeMCPSurface:
             return
         raise SurfaceError("AUTHORIZATION_REQUIRED", f"node {actor.node_id} is not authorized for project {project_id}")
 
+    def _require_local_project_reader(self, *, project_id: str) -> None:
+        self._require_project(project_id)
+        if not self.local_node_id:
+            raise SurfaceError("AUTHORIZATION_REQUIRED", "operation requires a configured local node identity")
+        if not self.store.has_project_access(self.local_node_id, project_id):
+            raise SurfaceError("AUTHORIZATION_REQUIRED", f"node {self.local_node_id} is not authorized for project {project_id}")
+
     def _sync_active_claim_state(self, *, project_id: str, task_id: str, as_of: str | None, expected_session_id: str | None = None) -> None:
         task = self._require_task(task_id)
         if task["state"] not in {"claimed", "in_progress"}:
@@ -126,6 +133,10 @@ class NodeMCPSurface:
     def project_entrypoint_get(self, *, project_id: str, as_of: str, actor: ActorIdentity | None = None) -> dict:
         self._require_project_reader(project_id=project_id, actor=actor)
         return {"status": "ok", "data": self.index.build_project_entrypoint(project_id, as_of)["entrypoint"]}
+
+    def project_entrypoint_get_local(self, *, project_id: str, as_of: str) -> dict:
+        self._require_local_project_reader(project_id=project_id)
+        return {"status": "ok", "data": self.index.build_project_entrypoint(project_id, as_of, persist=False)["entrypoint"]}
 
     def tasks_list_by_index(self, *, project_id: str, index_name: str, as_of: str, limit: int = 20, actor: ActorIdentity | None = None) -> dict:
         self._require_project_reader(project_id=project_id, actor=actor)

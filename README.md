@@ -24,6 +24,49 @@
 
 V1 keeps the coordinator thin and non-authoritative. Each project has exactly one owner node for canonical domain writes. Non-owner nodes may read synced metadata, request claims, and submit routed proposals that require explicit owner acceptance.
 
+## Owner-Local Bootstrap CLI (V1.1)
+
+The supported V1.1 operator path is local-only and explicit:
+
+1. Initialize a persistent node home for this repository.
+2. Explicitly adopt this repository as the owner-local project.
+3. Inspect persisted status.
+4. Read deterministic project data for the adopted repository.
+
+```bash
+python3 scripts/capiforge_cli.py init
+python3 scripts/capiforge_cli.py adopt
+python3 scripts/capiforge_cli.py status
+python3 scripts/capiforge_cli.py read --as-of 2026-06-19T13:30:00Z
+```
+
+Every command prints one JSON envelope with `{status,data,error}`.
+
+Supported process-level guarantee: sequential subprocess execution (`init` → `adopt` → `status`/`read`) is supported. Overlapping concurrent `adopt`/`read` invocations against the same `.capiforge/node` state are out of scope for V1.1.
+
+Example `status` response:
+
+```json
+{"status":"ok","data":{"bootstrap_state":"adopted","local_node_id":"node:...","node_home":"/repo/.capiforge/node","node_db_path":"/repo/.capiforge/node/node.sqlite3","adopted_project":{"repo_root":"/repo","workspace_id":"workspace:...","project_id":"project:..."}},"error":null}
+```
+
+Example `read` response:
+
+```json
+{"status":"ok","data":{"bootstrap_state":"adopted","project":{"repo_root":"/repo","project_id":"project:..."},"entrypoint":{"project_id":"project:...","generated_at":"2026-06-19T13:30:00Z"}},"error":null}
+```
+
+The owner-local node home layout is:
+
+- `.capiforge/node/bootstrap.json` — persisted bootstrap state (`uninitialized`, `initialized`, `adopted`)
+- `.capiforge/node/node.sqlite3` — local node SQLite store for the adopted repository
+
+### Explicit Non-Goals for This Flow
+
+- No coordinator enrollment is required for the owner-local CLI.
+- No implicit repository adoption happens during `init`.
+- No LAN workflows, claims orchestration, cross-node routing automation, or multi-project bootstrap are included in this V1.1 path.
+
 Shared read/sync surfaces are intended for trusted enrolled nodes only. Runtime calls now require a session-bound `node_proof` derived from the invitation fingerprint plus `node_id`, `agent_id`, and `session_id`, instead of treating a reusable shared string or raw `node_id` as sufficient authority.
 
 Project-scoped authorization is now enforced before local entrypoint reads, indexed task reads, claims, and routed mutation proposal creation. Enrollment alone is not enough to inspect or act on arbitrary project IDs.

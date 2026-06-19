@@ -23,15 +23,18 @@ from runtime.shared.errors import SurfaceError
 from runtime.shared.ids import ActorIdentity, canonical_id, derive_node_proof
 
 
-NODE_SCHEMA = REPO_ROOT / "storage" / "node-schema.sql"
 COORDINATOR_SCHEMA = REPO_ROOT / "storage" / "coordinator-schema.sql"
 
 
-def connect_schema(db_path: Path, schema_path: Path) -> sqlite3.Connection:
+def connect_coordinator(db_path: Path):
     connection = sqlite3.connect(db_path)
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.executescript(schema_path.read_text())
+    connection.executescript(COORDINATOR_SCHEMA.read_text())
     return connection
+
+
+def open_node_store(db_path: Path) -> NodeStore:
+    return NodeStore.from_file(db_path)
 
 
 def mirror_audit(source: NodeStore, destination: NodeStore, audit_id: str) -> None:
@@ -99,9 +102,9 @@ def run_demo(output_dir: Path) -> dict:
     worker_db_path = output_dir / "worker.sqlite3"
     coordinator_db_path = output_dir / "coordinator.sqlite3"
 
-    owner_store = NodeStore(connect_schema(owner_db_path, NODE_SCHEMA))
-    worker_store = NodeStore(connect_schema(worker_db_path, NODE_SCHEMA))
-    coordinator_db = connect_schema(coordinator_db_path, COORDINATOR_SCHEMA)
+    owner_store = open_node_store(owner_db_path)
+    worker_store = open_node_store(worker_db_path)
+    coordinator_db = connect_coordinator(coordinator_db_path)
 
     enrollment = EnrollmentRegistry(coordinator_db)
     claims = ClaimRegistry(coordinator_db)
@@ -118,8 +121,10 @@ def run_demo(output_dir: Path) -> dict:
 
     workspace_name = "Casa"
     project_name = "CapiForge"
+    worker_project_name = "CapiForge Worker"
     workspace_id = canonical_id("workspace", workspace_name)
     project_id = canonical_id("project", workspace_name, project_name)
+    worker_project_id = canonical_id("project", workspace_name, worker_project_name)
     audit_id = canonical_id("audit", project_id, "published-audit")
     task_id = canonical_id("task", project_id, audit_id, "review-runtime")
 
@@ -158,6 +163,23 @@ def run_demo(output_dir: Path) -> dict:
             project_name=project_name,
             owner_node_id="node_owner",
         )
+    bootstrap_project(
+        worker_store,
+        workspace_id=workspace_id,
+        workspace_name=workspace_name,
+        project_id=worker_project_id,
+        project_name=worker_project_name,
+        owner_node_id="node_worker",
+    )
+    worker_store.approve_project_link(worker_project_id, project_id, "human_demo")
+    worker_store.approve_project_link(project_id, worker_project_id, "human_demo")
+    worker_store.record_cross_project_approval(
+        "apr-worker-owner",
+        worker_project_id,
+        project_id,
+        "2026-06-18T12:02:45Z",
+        "human_demo",
+    )
     steps.append(
         {
             "step": 2,
@@ -195,6 +217,17 @@ def run_demo(output_dir: Path) -> dict:
         assigned_by_human_actor_id="human_demo",
         assigned_at="2026-06-18T12:02:00Z",
         authority=ActorIdentity(node_id="node_owner", agent_id="human_operator", session_id="sess_admin", human_actor_id="human_demo", node_proof=derive_node_proof(node_id="node_owner", agent_id="human_operator", session_id="sess_admin", invitation_fingerprint=owner_fingerprint)),
+    )
+    enrollment.assign_owner(
+        project_id=worker_project_id,
+        owner_node_id="node_worker",
+        assigned_by_human_actor_id="human_demo",
+        assigned_at="2026-06-18T12:02:30Z",
+        authority=ActorIdentity(node_id="node_owner", agent_id="human_operator", session_id="sess_admin", human_actor_id="human_demo", node_proof=derive_node_proof(node_id="node_owner", agent_id="human_operator", session_id="sess_admin", invitation_fingerprint=owner_fingerprint)),
+    )
+    coordinator_db.execute(
+        "INSERT INTO notice_approvals (approval_id, source_project_id, target_project_id, notice_recorded_at, approved_by_human_actor_id, approval_status, routed_to_owner_node_id) VALUES (?,?,?,?,?,?,?)",
+        ("notice-worker-owner", worker_project_id, project_id, "2026-06-18T12:02:45Z", "human_demo", "approved", "node_owner"),
     )
     routes.announce_sync_status(
         announcement_id="ann-owner",
@@ -368,6 +401,7 @@ def run_demo(output_dir: Path) -> dict:
         actor=worker_actor,
         requested_state="blocked",
         justification=route_justification,
+        source_project_id=worker_project_id,
         metadata={
             "blocked_reason": "Worker found follow-up risk requiring owner call",
             "blocked_evidence": "artifact://demo/worker-observation",
@@ -394,7 +428,7 @@ def run_demo(output_dir: Path) -> dict:
         },
         "steps": steps,
         "notes": [
-            "Bootstrap and replication are still script-driven because the current V1 runtime exposes no import/sync bootstrap surface for node SQLite state.",
+            "Owner and worker node stores now reuse the shared persistent SQLite helper used by the owner-local bootstrap flow.",
             "Canonical task creation and state transitions ran through the owner node MCP surface; claim exclusivity and owner-acceptance routing ran through the coordinator-backed runtime.",
         ],
     }

@@ -4,6 +4,26 @@ import sqlite3
 from pathlib import Path
 
 UNSET = object()
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_NODE_SCHEMA_PATH = REPO_ROOT / "storage" / "node-schema.sql"
+
+
+def _resolve_schema_path(schema_path: str | Path | None = None) -> Path:
+    if schema_path is None:
+        return DEFAULT_NODE_SCHEMA_PATH
+    path = Path(schema_path)
+    return path if path.is_absolute() else Path.cwd() / path
+
+
+def connect_node_store(db_path: str | Path, schema_path: str | Path | None = None) -> sqlite3.Connection:
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    initialize_schema = not path.exists() or path.stat().st_size == 0
+    connection = sqlite3.connect(path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    if initialize_schema:
+        connection.executescript(_resolve_schema_path(schema_path).read_text())
+    return connection
 
 
 class NodeStore:
@@ -13,10 +33,14 @@ class NodeStore:
         self.db.execute("PRAGMA foreign_keys = ON")
 
     @classmethod
-    def from_schema(cls, schema_path: str = "storage/node-schema.sql") -> "NodeStore":
+    def from_schema(cls, schema_path: str | Path = DEFAULT_NODE_SCHEMA_PATH) -> "NodeStore":
         db = sqlite3.connect(":memory:")
-        db.executescript(Path(schema_path).read_text())
+        db.executescript(_resolve_schema_path(schema_path).read_text())
         return cls(db)
+
+    @classmethod
+    def from_file(cls, db_path: str | Path, schema_path: str | Path | None = None) -> "NodeStore":
+        return cls(connect_node_store(db_path, schema_path))
 
     def close(self) -> None:
         self.db.close()

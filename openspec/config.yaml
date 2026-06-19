@@ -2,31 +2,31 @@ schema: spec-driven
 
 context: |
   Project: CapiForge
-  State: Bootstrap only; repository has no application source or package manifests yet.
-  Tech stack: Not detected.
-  Architecture: Not detected; target direction is local-first, secure, extensible MCP-friendly system.
-  Testing: No test runner, coverage tool, or quality tool detected.
+  State: Python V1 runtime bootstrap with implemented node/coordinator modules and archived first change.
+  Tech stack: Python stdlib runtime, SQLite schemas, Markdown contracts/specs.
+  Architecture: Local-first multi-node system with one canonical owner node per project and a thin non-authoritative coordinator.
+  Testing: unittest suite via repo-root discovery shim; no coverage or quality-tool config detected.
   Style: Technical artifacts in English.
 
 strict_tdd: false
 
 testing:
-  detected: 2026-06-18
+  detected: 2026-06-19
   strict_tdd: false
   runner:
-    available: false
-    framework: null
-    command: ""
+    available: true
+    framework: unittest
+    command: python3 -m unittest
   layers:
     unit:
-      available: false
-      tool: null
+      available: true
+      tool: unittest
     integration:
-      available: false
-      tool: null
+      available: true
+      tool: unittest
     e2e:
-      available: false
-      tool: null
+      available: true
+      tool: unittest
   coverage:
     available: false
     command: ""
@@ -56,11 +56,11 @@ rules:
     - Group by phase and keep each task completable in one session.
     - Create foundational security tasks before feature expansion.
   apply:
-    - Follow the established stack once chosen; do not guess dependencies.
+    - Follow the existing stdlib-first Python and SQLite patterns; do not add dependencies without spec/design justification.
     tdd: false
-    test_command: ""
+    test_command: python3 -m unittest
   verify:
-    test_command: ""
+    test_command: python3 -m unittest
     build_command: ""
     coverage_threshold: 0
   archive:

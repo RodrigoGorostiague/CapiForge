@@ -2,6 +2,7 @@ import json
 import unittest
 
 from runtime.node.index import NodeIndexBuilder
+from runtime.node.mcp import NodeMCPSurface
 from runtime.node.router import CrossProjectGuardError, NodeRouter
 from runtime.node.store import NodeStore
 from runtime.shared.contracts import JustificationPayload
@@ -63,6 +64,17 @@ class NodeRuntimeIntegrationTest(unittest.TestCase):
         self.assertEqual(router.resolve_owner_node_id("prj_main"), "node_owner")
         entrypoint = NodeIndexBuilder(self.store).build_project_entrypoint("prj_main", "2026-06-18T12:10:00Z")
         self.assertEqual(entrypoint["entrypoint"]["owner_node_id"], "node_owner")
+
+    def test_local_read_helper_returns_ephemeral_entrypoint(self) -> None:
+        surface = NodeMCPSurface(store=self.store, router=NodeRouter(self.store), local_node_id="node_owner")
+
+        result = surface.project_entrypoint_get_local(project_id="prj_main", as_of="2026-06-18T12:10:00Z")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["project_id"], "prj_main")
+        self.assertEqual(result["data"]["owner_node_id"], "node_owner")
+        self.assertEqual(result["data"]["generated_at"], "2026-06-18T12:10:00Z")
+        self.assertIsNone(self.store.get_project_entrypoint("prj_main"))
 
     def test_sync_export_excludes_long_form_documents_and_retains_metadata(self) -> None:
         earlier = self.store.export_sync_payload("prj_main", as_of="2026-06-18T12:10:00Z")
