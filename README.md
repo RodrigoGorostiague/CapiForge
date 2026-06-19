@@ -26,7 +26,21 @@ V1 keeps the coordinator thin and non-authoritative. Each project has exactly on
 
 ## Owner-Local Bootstrap CLI (V1.1)
 
-The supported V1.1 operator path is local-only and explicit:
+### Install the canonical `capiforge` command
+
+The official install path for the MCP command is an editable Python install from the repo root:
+
+```bash
+python3 -m pip install -e .
+capiforge mcp --help
+capiforge mcp serve --help
+```
+
+This installs the public console script `capiforge` backed by `runtime.cli:main`.
+
+### Bootstrap commands
+
+The canonical public operator path is now the installed `capiforge` command. The supported V1.1 flow remains local-only and explicit:
 
 1. Initialize a persistent node home for this repository.
 2. Explicitly adopt this repository as the owner-local project.
@@ -34,10 +48,16 @@ The supported V1.1 operator path is local-only and explicit:
 4. Read deterministic project data for the adopted repository.
 
 ```bash
+capiforge init
+capiforge adopt
+capiforge status
+capiforge read --as-of 2026-06-19T13:30:00Z
+```
+
+The legacy bootstrap helper remains available as a compatibility shim:
+
+```bash
 python3 scripts/capiforge_cli.py init
-python3 scripts/capiforge_cli.py adopt
-python3 scripts/capiforge_cli.py status
-python3 scripts/capiforge_cli.py read --as-of 2026-06-19T13:30:00Z
 ```
 
 Every command prints one JSON envelope with `{status,data,error}`.
@@ -68,6 +88,13 @@ The owner-local node home layout is:
 - No LAN workflows, claims orchestration, cross-node routing automation, or multi-project bootstrap are included in this V1.1 path.
 
 Shared read/sync surfaces are intended for trusted enrolled nodes only. Runtime calls now require a session-bound `node_proof` derived from the invitation fingerprint plus `node_id`, `agent_id`, and `session_id`, instead of treating a reusable shared string or raw `node_id` as sufficient authority.
+
+For local MCP stdio usage after installation:
+
+```bash
+capiforge mcp --help
+capiforge mcp serve --repo-root /path/to/repo --node-home /path/to/repo/.capiforge/node
+```
 
 Project-scoped authorization is now enforced before local entrypoint reads, indexed task reads, claims, and routed mutation proposal creation. Enrollment alone is not enough to inspect or act on arbitrary project IDs.
 

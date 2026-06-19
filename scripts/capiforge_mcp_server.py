@@ -7,8 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from runtime.bootstrap_cli import main
+from runtime.node.mcp_stdio import main
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(prog="capiforge_cli", repo_root_default=str(REPO_ROOT)))
+    raise SystemExit(main())

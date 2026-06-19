@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 demo-runtime/
+.capiforge/
+*.egg-info/
