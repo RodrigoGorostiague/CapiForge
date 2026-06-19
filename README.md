@@ -1,6 +1,16 @@
 # CapiForge Runtime Bootstrap
 
+<p align="center">
+  <img src="assets/capiforge-icons/capiforge_logo_original_transparente.png" alt="CapiForge logo" width="220">
+</p>
+
 > Product / project name: **CapiForge**
+
+## Brand Assets
+
+- `assets/capiforge-icons/capiforge_logo_original_transparente.png` is the default README/GitHub branding asset for light surfaces.
+- `assets/capiforge-icons/capiforge_logo_invertido_transparente.png` is preserved for dark-background Git and project-branding uses.
+- `assets/capiforge-icons/capiforge-ascii.txt` is kept in-project for future TUI/app graphics so the terminal presentation can reuse the same brand set later.
 
 ## Module Layout
 
