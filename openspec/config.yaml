@@ -1,0 +1,67 @@
+schema: spec-driven
+
+context: |
+  Project: CapiForge
+  State: Bootstrap only; repository has no application source or package manifests yet.
+  Tech stack: Not detected.
+  Architecture: Not detected; target direction is local-first, secure, extensible MCP-friendly system.
+  Testing: No test runner, coverage tool, or quality tool detected.
+  Style: Technical artifacts in English.
+
+strict_tdd: false
+
+testing:
+  detected: 2026-06-18
+  strict_tdd: false
+  runner:
+    available: false
+    framework: null
+    command: ""
+  layers:
+    unit:
+      available: false
+      tool: null
+    integration:
+      available: false
+      tool: null
+    e2e:
+      available: false
+      tool: null
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter:
+      available: false
+      command: ""
+    type_checker:
+      available: false
+      command: ""
+    formatter:
+      available: false
+      command: ""
+
+rules:
+  proposal:
+    - Define security boundaries, trust assumptions, and rollback plan.
+    - Explain local-first and shared-MCP tradeoffs explicitly.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords (MUST, SHOULD, MAY).
+    - State machine and machine-sync behavior MUST be explicit.
+  design:
+    - Document threat model, credential storage, and trust boundaries.
+    - Include architecture rationale for local-first persistence and MCP sharing.
+  tasks:
+    - Group by phase and keep each task completable in one session.
+    - Create foundational security tasks before feature expansion.
+  apply:
+    - Follow the established stack once chosen; do not guess dependencies.
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas.

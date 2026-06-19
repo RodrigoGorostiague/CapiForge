@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+UNSET = object()
+
+
+class NodeStore:
+    def __init__(self, connection: sqlite3.Connection):
+        self.db = connection
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA foreign_keys = ON")
+
+    @classmethod
+    def from_schema(cls, schema_path: str = "storage/node-schema.sql") -> "NodeStore":
+        db = sqlite3.connect(":memory:")
+        db.executescript(Path(schema_path).read_text())
+        return cls(db)
+
+    def close(self) -> None:
+        self.db.close()
+
+    def create_workspace(self, workspace_id: str, canonical_link: str, name: str) -> None:
+        self.db.execute("INSERT INTO workspaces VALUES (?,?,?)", (workspace_id, canonical_link, name))
+
+    def upsert_project(self, project_id: str, workspace_id: str, owner_node_id: str, canonical_link: str, name: str) -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO projects VALUES (?,?,?,?,?)",
+            (project_id, workspace_id, owner_node_id, canonical_link, name),
+        )
+
+    def create_audit(self, audit_id: str, project_id: str, state: str, title: str, content: str) -> None:
+        self.db.execute("INSERT INTO audits VALUES (?,?,?,?,?,NULL)", (audit_id, project_id, state, title, content))
+
+    def create_task(self, task_id: str, project_id: str, origin_audit_id: str, state: str, priority: str, effort: str, risk: str, task_type: str, description: str, justification_json: str = "{}", execution_context_json: str = "{}", active_claim_session_id: str | None = None, blocked_reason: str | None = None, blocked_evidence: str | None = None, blocked_next_step: str | None = None, done_result: str | None = None, done_artifacts: str | None = None, done_references: str | None = None, done_expected_impact: str | None = None) -> None:
+        self.db.execute(
+            "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                task_id,
+                project_id,
+                origin_audit_id,
+                state,
+                priority,
+                effort,
+                risk,
+                task_type,
+                description,
+                justification_json,
+                execution_context_json,
+                active_claim_session_id,
+                blocked_reason,
+                blocked_evidence,
+                blocked_next_step,
+                done_result,
+                done_artifacts,
+                done_references,
+                done_expected_impact,
+            ),
+        )
+
+    def record_task_mutation(self, mutation_id: str, task_id: str, actor_node_id: str, actor_agent_id: str, actor_session_id: str, justification_json: str, authority_mode: str) -> None:
+        self.db.execute(
+            "INSERT INTO task_mutations (mutation_id,task_id,actor_node_id,actor_agent_id,actor_session_id,justification_json,authority_mode) VALUES (?,?,?,?,?,?,?)",
+            (mutation_id, task_id, actor_node_id, actor_agent_id, actor_session_id, justification_json, authority_mode),
+        )
+
+    def cache_claim(self, task_id: str, claim_id: str, status: str, lease_expires_at: str, holder_node_id: str, holder_agent_id: str, holder_session_id: str, plan: str) -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO claims_local_cache VALUES (?,?,?,?,?,?,?,?)",
+            (task_id, claim_id, status, lease_expires_at, holder_node_id, holder_agent_id, holder_session_id, plan),
+        )
+
+    def get_cached_claim(self, task_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM claims_local_cache WHERE task_id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def add_artifact_ref(self, artifact_ref_id: str, project_id: str, canonical_link: str, summary: str, task_id: str | None = None, audit_id: str | None = None) -> None:
+        self.db.execute("INSERT INTO artifact_refs VALUES (?,?,?,?,?,?)", (artifact_ref_id, project_id, task_id, audit_id, canonical_link, summary))
+
+    def add_local_document(self, document_id: str, project_id: str, storage_path: str, task_id: str | None = None) -> None:
+        self.db.execute("INSERT INTO local_documents VALUES (?,?,?,?, 'local_only')", (document_id, project_id, task_id, storage_path))
+
+    def approve_project_link(self, source_project_id: str, target_project_id: str, approved_by_human_actor_id: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO project_links VALUES (?,?,?)", (source_project_id, target_project_id, approved_by_human_actor_id))
+
+    def record_cross_project_approval(self, approval_id: str, source_project_id: str, target_project_id: str, notice_recorded_at: str, approved_by_human_actor_id: str, approval_status: str = "approved") -> None:
+        self.db.execute(
+            "INSERT OR REPLACE INTO cross_project_approvals VALUES (?,?,?,?,?,?)",
+            (approval_id, source_project_id, target_project_id, notice_recorded_at, approved_by_human_actor_id, approval_status),
+        )
+
+    def get_project(self, project_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM projects WHERE project_id = ?", (project_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_workspace(self, workspace_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM workspaces WHERE workspace_id = ?", (workspace_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_workspace_projects(self, workspace_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT project_id, owner_node_id, canonical_link, name FROM projects WHERE workspace_id = ? ORDER BY project_id",
+            (workspace_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_project_entrypoint(self, project_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM project_entrypoints WHERE project_id = ?", (project_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_task_mutation(self, mutation_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT tm.*, t.project_id FROM task_mutations tm JOIN tasks t ON t.task_id = tm.task_id WHERE tm.mutation_id = ?",
+            (mutation_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_task(self, task_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_audit(self, audit_id: str) -> dict | None:
+        row = self.db.execute("SELECT * FROM audits WHERE audit_id = ?", (audit_id,)).fetchone()
+        return dict(row) if row else None
+
+    def owner_node_id(self, project_id: str) -> str:
+        row = self.get_project(project_id)
+        if not row:
+            raise ValueError(f"unknown project: {project_id}")
+        return row["owner_node_id"]
+
+    def has_project_access(self, node_id: str, project_id: str) -> bool:
+        if self.db.execute("SELECT 1 FROM projects WHERE project_id = ? AND owner_node_id = ?", (project_id, node_id)).fetchone():
+            return True
+        row = self.db.execute(
+            "SELECT 1 FROM project_links pl "
+            "JOIN projects source ON source.project_id = pl.source_project_id "
+            "JOIN projects target ON target.project_id = pl.target_project_id "
+            "WHERE ((source.owner_node_id = ? AND target.project_id = ?) "
+            "OR (target.owner_node_id = ? AND source.project_id = ?)) LIMIT 1",
+            (node_id, project_id, node_id, project_id),
+        ).fetchone()
+        return row is not None
+
+    def task_belongs_to_project(self, task_id: str, project_id: str) -> bool:
+        row = self.db.execute("SELECT 1 FROM tasks WHERE task_id = ? AND project_id = ?", (task_id, project_id)).fetchone()
+        return row is not None
+
+    def list_linked_projects(self, project_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT p.project_id, p.canonical_link, p.name FROM project_links pl JOIN projects p ON p.project_id = pl.target_project_id WHERE pl.source_project_id = ? ORDER BY p.project_id",
+            (project_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_active_audits(self, project_id: str) -> list[dict]:
+        rows = self.db.execute("SELECT audit_id, state, title FROM audits WHERE project_id = ? AND state IN ('draft','published') ORDER BY audit_id", (project_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_tasks_for_index(self, project_id: str, index_name: str, as_of: str) -> list[dict]:
+        filters = {
+            "ready": "t.state = 'ready'",
+            "blocked": "t.state = 'blocked'",
+            "done": "t.state = 'done'",
+            "critical": "t.priority = 'critical' AND t.state NOT IN ('done','cancelled')",
+            "expired_claim": "c.task_id IS NOT NULL AND (c.status = 'expired' OR (c.status IN ('active','renewed') AND c.lease_expires_at <= ?))",
+        }
+        where = filters[index_name]
+        params = (project_id, as_of) if index_name == "expired_claim" else (project_id,)
+        rows = self.db.execute(
+            f"SELECT t.task_id, t.state, t.priority FROM tasks t LEFT JOIN claims_local_cache c ON c.task_id = t.task_id WHERE t.project_id = ? AND {where} ORDER BY CASE t.priority WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, t.task_id",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def is_cross_project_action_allowed(self, source_project_id: str, target_project_id: str) -> bool:
+        approved = self.db.execute(
+            "SELECT 1 FROM cross_project_approvals WHERE source_project_id = ? AND target_project_id = ? AND approval_status = 'approved'",
+            (source_project_id, target_project_id),
+        ).fetchone()
+        linked = self.db.execute(
+            "SELECT 1 FROM project_links a JOIN project_links b ON a.source_project_id = b.target_project_id AND a.target_project_id = b.source_project_id WHERE a.source_project_id = ? AND a.target_project_id = ?",
+            (source_project_id, target_project_id),
+        ).fetchone()
+        return bool(approved and linked)
+
+    def upsert_project_entrypoint(self, project_id: str, owner_node_id: str, summary_json: str, refs: dict[str, str]) -> None:
+        self.db.execute(
+            "INSERT INTO project_entrypoints VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET owner_node_id=excluded.owner_node_id, summary_json=excluded.summary_json, ready_index_ref=excluded.ready_index_ref, blocked_index_ref=excluded.blocked_index_ref, done_index_ref=excluded.done_index_ref, critical_index_ref=excluded.critical_index_ref, expired_claim_index_ref=excluded.expired_claim_index_ref",
+            (project_id, owner_node_id, summary_json, refs["ready"], refs["blocked"], refs["done"], refs["critical"], refs["expired_claim"]),
+        )
+
+    def update_task_state(
+        self,
+        task_id: str,
+        *,
+        state: str,
+        active_claim_session_id: str | None | object = UNSET,
+        blocked_reason: str | None | object = UNSET,
+        blocked_evidence: str | None | object = UNSET,
+        blocked_next_step: str | None | object = UNSET,
+        done_result: str | None | object = UNSET,
+        done_artifacts: str | None | object = UNSET,
+        done_references: str | None | object = UNSET,
+        done_expected_impact: str | None | object = UNSET,
+    ) -> None:
+        current = self.get_task(task_id)
+        if not current:
+            raise ValueError(f"unknown task: {task_id}")
+
+        def value_or_current(value: str | None | object, field: str):
+            return current[field] if value is UNSET else value
+
+        self.db.execute(
+            "UPDATE tasks SET state = ?, active_claim_session_id = ?, blocked_reason = ?, blocked_evidence = ?, blocked_next_step = ?, done_result = ?, done_artifacts = ?, done_references = ?, done_expected_impact = ? WHERE task_id = ?",
+            (
+                state,
+                value_or_current(active_claim_session_id, "active_claim_session_id"),
+                value_or_current(blocked_reason, "blocked_reason"),
+                value_or_current(blocked_evidence, "blocked_evidence"),
+                value_or_current(blocked_next_step, "blocked_next_step"),
+                value_or_current(done_result, "done_result"),
+                value_or_current(done_artifacts, "done_artifacts"),
+                value_or_current(done_references, "done_references"),
+                value_or_current(done_expected_impact, "done_expected_impact"),
+                task_id,
+            ),
+        )
+
+    def sync_task_with_claim(self, task_id: str, *, claim_status: str | None) -> None:
+        task = self.get_task(task_id)
+        if not task:
+            raise ValueError(f"unknown task: {task_id}")
+        if task["state"] not in {"claimed", "in_progress"}:
+            return
+        if claim_status in {"active", "renewed"}:
+            return
+        self.update_task_state(task_id, state="ready", active_claim_session_id=None)
+
+    def export_sync_payload(self, project_id: str, *, as_of: str) -> dict:
+        project = self.get_project(project_id)
+        if not project:
+            raise ValueError(f"unknown project: {project_id}")
+        task_rows = self.db.execute(
+            "SELECT task_id, state, priority, effort, risk, type, origin_audit_id FROM tasks WHERE project_id = ? ORDER BY task_id",
+            (project_id,),
+        ).fetchall()
+        artifact_rows = self.db.execute(
+            "SELECT artifact_ref_id, task_id, audit_id, canonical_link, summary FROM artifact_refs WHERE project_id = ? ORDER BY artifact_ref_id",
+            (project_id,),
+        ).fetchall()
+        return {
+            "project_id": project_id,
+            "owner_node_id": project["owner_node_id"],
+            "as_of": as_of,
+            "tasks": [dict(row) for row in task_rows],
+            "artifact_refs": [dict(row) for row in artifact_rows],
+        }
+
+    def update_audit_content(self, audit_id: str, content: str) -> None:
+        self.db.execute("UPDATE audits SET content = ? WHERE audit_id = ?", (content, audit_id))
