@@ -2,10 +2,10 @@ schema: spec-driven
 
 context: |
   Project: CapiForge
-  State: Python V1 runtime bootstrap with implemented node/coordinator modules and archived first change.
-  Tech stack: Python stdlib runtime, SQLite schemas, Markdown contracts/specs.
-  Architecture: Local-first multi-node system with one canonical owner node per project and a thin non-authoritative coordinator.
-  Testing: unittest suite via repo-root discovery shim; no coverage or quality-tool config detected.
+  State: Python V1.1 owner-local bootstrap CLI with archived OpenSpec changes and active node/coordinator runtime modules.
+  Tech stack: Python 3 stdlib, SQLite schemas, argparse CLI, Markdown/OpenSpec artifacts.
+  Architecture: Local-first owner-node system with deterministic entrypoint indexes and a thin non-authoritative coordinator for enrollment, claims, and routed visibility.
+  Testing: 76 stdlib unittest cases via repo-root load_tests shim; unit, integration, and e2e layers exist; no coverage or quality-tool config detected.
   Style: Technical artifacts in English.
 
 strict_tdd: false
@@ -55,8 +55,9 @@ rules:
   tasks:
     - Group by phase and keep each task completable in one session.
     - Create foundational security tasks before feature expansion.
+    - Keep proposed review slices near 400 lines and ask before chained PR splits.
   apply:
-    - Follow the existing stdlib-first Python and SQLite patterns; do not add dependencies without spec/design justification.
+    - Follow the existing stdlib-first Python, SQLite, and JSON-envelope CLI patterns; do not add dependencies without spec/design justification.
     tdd: false
     test_command: python3 -m unittest
   verify:
