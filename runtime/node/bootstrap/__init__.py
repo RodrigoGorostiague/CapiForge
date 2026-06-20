@@ -83,6 +83,12 @@ class NodeBootstrap:
             return self._status_unlocked()
 
     def _status_unlocked(self) -> BootstrapState:
+        state = self._load_state_unlocked()
+        if state.state == "adopted":
+            self._ensure_adopted_store_ready(state)
+        return state
+
+    def _load_state_unlocked(self) -> BootstrapState:
         if not self.manifest_path.exists():
             return BootstrapState(
                 state="uninitialized",
@@ -218,10 +224,27 @@ class NodeBootstrap:
             return self._require_adopted_unlocked()
 
     def _require_adopted_unlocked(self) -> BootstrapState:
-        state = self._status_unlocked()
+        state = self._load_state_unlocked()
         if state.state != "adopted" or state.adopted_project is None:
             raise SurfaceError("INVALID_BOOTSTRAP_STATE", "bootstrap adoption is required before reads")
+        self._ensure_adopted_store_ready(state)
         return state
+
+    def _ensure_adopted_store_ready(self, state: BootstrapState) -> None:
+        store: NodeStore | None = None
+        try:
+            _, store = self._open_adopted_store_unlocked(state)
+        finally:
+            if store is not None:
+                store.close()
+
+    def _open_adopted_store_unlocked(self, state: BootstrapState | None = None) -> tuple[BootstrapState, NodeStore]:
+        resolved_state = state or self._load_state_unlocked()
+        if resolved_state.state != "adopted" or resolved_state.adopted_project is None:
+            raise SurfaceError("INVALID_BOOTSTRAP_STATE", "bootstrap adoption is required before reads")
+        if not Path(resolved_state.node_db_path).exists():
+            raise SurfaceError("INVALID_BOOTSTRAP_STATE", "adopted bootstrap state requires an existing owner-local node database")
+        return resolved_state, NodeStore.from_file(resolved_state.node_db_path, schema_path=self.schema_path)
 
     def read_entrypoint(
         self,
@@ -247,8 +270,7 @@ class NodeBootstrap:
         from runtime.node.mcp import NodeMCPSurface
         from runtime.node.router import NodeRouter
 
-        state = self._require_adopted_unlocked()
-        store = NodeStore.from_file(state.node_db_path)
+        state, store = self._open_adopted_store_unlocked()
         try:
             surface = NodeMCPSurface(store=store, router=NodeRouter(store), local_node_id=state.local_node_id)
             entrypoint = surface.project_entrypoint_get_local(

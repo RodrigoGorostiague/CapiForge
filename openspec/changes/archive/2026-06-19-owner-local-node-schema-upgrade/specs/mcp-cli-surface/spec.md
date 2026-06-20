@@ -1,14 +1,11 @@
-# MCP CLI Surface Specification
+# Delta for mcp-cli-surface
 
-## Purpose
-
-Define a deterministic MCP and CLI contract for querying, updating, claiming, and synchronizing the task-audit system.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Deterministic operational surface
 
 The system MUST expose deterministic MCP and CLI operations for querying tasks and audits, claiming work, updating task state, and reading sync status. For the owner-local bootstrap path, the CLI MUST also expose `init`, `adopt`, `status`, and `read` as explicit local-operator commands. Responses SHOULD use canonical IDs, bounded results, and explicit status or error outcomes. The CLI MUST surface bootstrap/adoption state as `uninitialized`, `initialized`, or `adopted`, MUST return explicit error outcomes when a command requires a later state than the current one, and MUST keep `read` read-only for the adopted repository only. Every owner-local entry path that opens the adopted local node, including bootstrap CLI flows, top-level lifecycle commands, and MCP stdio surfaces, MUST run the same open-time schema upgrade pass before reading or mutating runtime state. Supported stale schemas MUST recover without manual SQL; unsafe schemas MUST return explicit local errors. When another bootstrap command already owns the local lock, the CLI MUST show visible waiting status, SHALL wait by default until the configured timeout, and MUST fail with explicit timeout or suspect-lock errors when safe progress cannot continue. Non-interactive execution MUST fail instead of prompting for stale-lock recovery. Negative lock-timeout values MUST be rejected as invalid arguments instead of being coerced. Verbose output SHOULD escalate owner identity, PID/liveness, lock age, and recovery hints.
+(Previously: owner-local entry paths reopened existing node DBs without a required shared schema-upgrade pass.)
 
 #### Scenario: Query actionable work
 - GIVEN a project has ready tasks
@@ -47,56 +44,3 @@ The system MUST expose deterministic MCP and CLI operations for querying tasks a
 - WHEN the operator runs a bootstrap command
 - THEN the CLI returns an explicit invalid-arguments error
 - AND the command does not touch persisted bootstrap state
-
-### Requirement: Mutation validation
-
-Every AI mutation operation MUST require justification metadata before the change is accepted. Mutation commands MUST reject invalid state transitions or missing required task metadata. For project domain state, only the project's owner node MUST be allowed to perform the canonical write. Non-owner nodes MAY submit proposals, claim requests, or routed mutation requests, but they MUST NOT be accepted as canonical writers.
-
-#### Scenario: Reject unjustified AI mutation
-- GIVEN an AI agent submits a task state change without justification metadata
-- WHEN the mutation is validated
-- THEN the system rejects the request
-
-#### Scenario: Reject non-owner canonical write
-- GIVEN a node is not the owner node for a project
-- WHEN it submits a direct canonical mutation for that project's domain state
-- THEN the system rejects or reroutes the request
-- AND the write is not recorded as canonical project state
-
-### Requirement: Human override and approval gates
-
-The surface MUST allow human overrides of AI-managed task state. AI MAY create cross-project tasks only after the system records both user notice and human approval for explicitly linked projects. Cross-project mutations MUST be routed to the destination project's owner node after those approvals are recorded.
-
-#### Scenario: Approve cross-project AI task creation
-- GIVEN two projects are explicitly linked
-- AND notice and human approval are recorded
-- WHEN an AI agent creates a cross-project task
-- THEN the system accepts the request
-
-#### Scenario: Route approved cross-project mutation
-- GIVEN notice and human approval are recorded for a linked destination project
-- WHEN a non-owner node invokes a cross-project mutation command
-- THEN the surface routes the mutation to the destination project's owner node
-
-### Requirement: Automatic agent lifecycle operations
-
-The system MUST expose deterministic MCP and CLI lifecycle operations for start-time reconciliation and finish-time closure after MCP bootstrap is configured. Start operations MUST resolve the adopted project, require a lifecycle key, reuse or create only same-project owner-local tasks, obtain a valid claim, and transition the task to `in_progress` before work proceeds. Finish operations MUST require a valid claim and MUST close to `done` or `blocked` with explicit justification metadata and status outcomes for expiry or validation failure.
-
-#### Scenario: Start work through lifecycle wrapper
-- GIVEN MCP is configured for an adopted project
-- WHEN an agent calls the lifecycle start operation with a lifecycle key and plan
-- THEN the response returns the reconciled task reference in `in_progress` with an active claim
-
-#### Scenario: Fail finish without a valid claim
-- GIVEN an agent attempts the lifecycle finish operation after claim expiry or release
-- WHEN the finish request is validated
-- THEN the surface returns an explicit failure outcome and does not change task state
-
-### Requirement: Audit-safe publication controls
-
-The surface MUST prevent autonomous AI publication or rewriting of closed audits unless a human-authorized addendum or follow-up audit flow is used.
-
-#### Scenario: Attempt to edit a closed audit
-- GIVEN an audit is `closed`
-- WHEN an agent requests direct content mutation
-- THEN the system rejects the edit and requires addendum or follow-up flow

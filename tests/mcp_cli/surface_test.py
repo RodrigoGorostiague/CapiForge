@@ -1,5 +1,6 @@
 import sqlite3
 import unittest
+import json
 from pathlib import Path
 
 from runtime.coordinator.claims import ClaimRegistry
@@ -209,6 +210,37 @@ class MCPSurfaceIntegrationTest(unittest.TestCase):
         self.assertEqual(stored["origin_audit_id"], "aud_main")
         self.assertEqual(stored["state"], "proposed")
 
+    def test_create_task_from_audit_persists_lifecycle_key_metadata(self) -> None:
+        actor = self.actor("node_owner", "agent_owner", "sess_owner_lifecycle")
+        response = self.surface.tasks_create_from_audit(
+            task_id="tsk_lifecycle_created",
+            project_id="prj_main",
+            audit_id="aud_main",
+            mutation_id="mut_lifecycle_create",
+            actor=actor,
+            priority="high",
+            effort="medium",
+            risk="low",
+            task_type="ops",
+            description="Lifecycle-created task",
+            justification=JustificationPayload(
+                summary="Lifecycle wrapper created a task",
+                evidence_refs=("lifecycle://agent-capiforge-auto-task-lifecycle",),
+                expected_impact="Allow deterministic task reuse",
+            ),
+            execution_context={"project_id": "prj_main", "lifecycle_key": "lifecycle://agent-capiforge-auto-task-lifecycle"},
+            initial_state="ready",
+            lifecycle_key="lifecycle://agent-capiforge-auto-task-lifecycle",
+        )
+        self.assertEqual(response["status"], "accepted")
+        stored = self.store.get_task("tsk_lifecycle_created")
+        self.assertEqual(stored["lifecycle_key"], "lifecycle://agent-capiforge-auto-task-lifecycle")
+        mutation = self.store.get_task_mutation("mut_lifecycle_create")
+        self.assertIsNotNone(mutation)
+        payload = json.loads(mutation["justification_json"])
+        self.assertEqual(payload["lifecycle_key"], "lifecycle://agent-capiforge-auto-task-lifecycle")
+        self.assertEqual(payload["lifecycle_creator"]["session_id"], "sess_owner_lifecycle")
+
     def test_transition_to_ready_requires_readiness_inputs(self) -> None:
         actor = self.actor("node_owner", "agent_owner", "sess_owner")
         self.surface.tasks_create_from_audit(
@@ -371,6 +403,112 @@ class MCPSurfaceIntegrationTest(unittest.TestCase):
                 ),
                 metadata={"active_claim_session_id": actor.session_id, "as_of": "2026-06-18T12:08:00Z"},
             )
+        self.assertEqual(self.store.get_task("tsk_ready")["state"], "ready")
+
+    def test_done_transition_persists_closeout_metadata_with_active_claim(self) -> None:
+        actor = self.actor("node_owner", "agent_owner", "sess_done")
+        self.surface.tasks_claim(
+            claim_id="clm_done",
+            project_id="prj_main",
+            task_id="tsk_ready",
+            actor=actor,
+            plan="Complete the task",
+            lease_started_at="2026-06-18T12:06:00Z",
+            lease_expires_at="2026-06-18T12:11:00Z",
+        )
+        self.surface.tasks_transition(
+            project_id="prj_main",
+            task_id="tsk_ready",
+            mutation_id="mut_done_finish",
+            actor=actor,
+            requested_state="done",
+            justification=JustificationPayload(
+                summary="Finished the lifecycle task",
+                evidence_refs=("artifact://main/done",),
+                expected_impact="Close the task with deterministic metadata",
+            ),
+            metadata={
+                "done_result": "completed",
+                "done_artifacts": "artifact://main/done",
+                "done_references": "ref://main/done",
+                "done_expected_impact": "Ship the completed work",
+            },
+        )
+        task = self.store.get_task("tsk_ready")
+        self.assertEqual(task["state"], "done")
+        self.assertEqual(task["done_result"], "completed")
+
+    def test_blocked_transition_persists_closeout_metadata_with_active_claim(self) -> None:
+        actor = self.actor("node_owner", "agent_owner", "sess_blocked")
+        self.surface.tasks_claim(
+            claim_id="clm_blocked_finish",
+            project_id="prj_main",
+            task_id="tsk_ready",
+            actor=actor,
+            plan="Block the task",
+            lease_started_at="2026-06-18T12:06:00Z",
+            lease_expires_at="2026-06-18T12:11:00Z",
+        )
+        self.surface.tasks_transition(
+            project_id="prj_main",
+            task_id="tsk_ready",
+            mutation_id="mut_blocked_finish",
+            actor=actor,
+            requested_state="blocked",
+            justification=JustificationPayload(
+                summary="Blocked during lifecycle closeout",
+                evidence_refs=("artifact://main/blocked",),
+                expected_impact="Capture the blocking dependency",
+            ),
+            metadata={
+                "blocked_reason": "awaiting dependency",
+                "blocked_evidence": "artifact://main/blocked",
+                "blocked_next_step": "Retry once dependency is resolved",
+            },
+        )
+        task = self.store.get_task("tsk_ready")
+        self.assertEqual(task["state"], "blocked")
+        self.assertEqual(task["blocked_reason"], "awaiting dependency")
+
+    def test_expired_claim_rejects_further_active_execution_and_demotes_task(self) -> None:
+        actor = self.actor("node_owner", "agent_owner", "sess_done_expired")
+        self.surface.tasks_claim(
+            claim_id="clm_done_expired",
+            project_id="prj_main",
+            task_id="tsk_ready",
+            actor=actor,
+            plan="Start then expire",
+            lease_started_at="2026-06-18T12:06:00Z",
+            lease_expires_at="2026-06-18T12:07:00Z",
+        )
+        self.surface.tasks_transition(
+            project_id="prj_main",
+            task_id="tsk_ready",
+            mutation_id="mut_done_progress",
+            actor=actor,
+            requested_state="in_progress",
+            justification=JustificationPayload(
+                summary="Execution started",
+                evidence_refs=("artifact://main/done-expired",),
+                expected_impact="Track active work before closeout",
+            ),
+            metadata={"active_claim_session_id": actor.session_id, "as_of": "2026-06-18T12:06:30Z"},
+        )
+        with self.assertRaises(SurfaceError) as ctx:
+            self.surface.tasks_transition(
+                project_id="prj_main",
+                task_id="tsk_ready",
+                mutation_id="mut_done_expired_finish",
+                actor=actor,
+                requested_state="in_progress",
+                justification=JustificationPayload(
+                    summary="Attempt stale closeout",
+                    evidence_refs=("artifact://main/done-expired",),
+                    expected_impact="Reject stale ownership",
+                ),
+                metadata={"active_claim_session_id": actor.session_id, "as_of": "2026-06-18T12:08:00Z"},
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_TASK_STATE")
         self.assertEqual(self.store.get_task("tsk_ready")["state"], "ready")
 
     def test_non_owner_transition_signals_owner_acceptance(self) -> None:

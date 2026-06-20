@@ -2,6 +2,7 @@ import importlib.util
 import io
 import json
 import multiprocessing
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -12,9 +13,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from runtime.coordinator.claims import ClaimRegistry
 from runtime.node.bootstrap import BootstrapLockInfo, NodeBootstrap
 from runtime.node.store import NodeStore
 from runtime.shared.errors import SurfaceError
+from runtime.shared.ids import ActorIdentity, derive_node_proof
 
 
 CLI_MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "capiforge_cli.py"
@@ -105,6 +108,47 @@ def attempt_bootstrap_command(repo_root: str, node_home: str, command: str, time
             result_queue.put({"status": "acquired"})
     except SurfaceError as exc:
         result_queue.put({"status": exc.code})
+
+
+def downgrade_owner_local_tasks_schema(db_path: Path) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP INDEX IF EXISTS idx_tasks_project_lifecycle_key")
+        connection.execute("ALTER TABLE tasks DROP COLUMN lifecycle_key")
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def read_owner_local_schema_state(db_path: Path) -> tuple[int, list[str]]:
+    connection = sqlite3.connect(db_path)
+    try:
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(tasks)").fetchall()]
+        return user_version, columns
+    finally:
+        connection.close()
+
+
+def write_incompatible_owner_local_schema(db_path: Path, *, user_version: int, include_project_id: bool) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            DROP TABLE IF EXISTS tasks;
+            CREATE TABLE tasks (
+              task_id TEXT PRIMARY KEY
+            );
+            """
+        )
+        if include_project_id:
+            connection.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT 'prj_1'")
+        connection.execute("ALTER TABLE tasks ADD COLUMN lifecycle_key TEXT")
+        connection.execute(f"PRAGMA user_version = {user_version}")
+        connection.commit()
+    finally:
+        connection.close()
 
 
 class BootstrapPersistenceTest(unittest.TestCase):
@@ -368,6 +412,20 @@ class BootstrapPersistenceTest(unittest.TestCase):
         self.assertEqual(state.adopted_project, adopted.adopted_project)
         self.assertEqual(entrypoint["project_id"], adopted.adopted_project["project_id"])
 
+    def test_open_or_init_repairs_supported_stale_adopted_schema_on_reopen(self) -> None:
+        self.bootstrap.open_or_init(interactive=False)
+        adopted = self.bootstrap.adopt_repo(interactive=False)
+
+        downgrade_owner_local_tasks_schema(self.bootstrap.node_db_path)
+
+        reopened = self.bootstrap.open_or_init(interactive=False)
+
+        self.assertEqual(reopened.state, "adopted")
+        self.assertEqual(reopened.adopted_project, adopted.adopted_project)
+        user_version, columns = read_owner_local_schema_state(self.bootstrap.node_db_path)
+        self.assertEqual(user_version, 1)
+        self.assertIn("lifecycle_key", columns)
+
 
 class BootstrapCliSurfaceTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -401,6 +459,78 @@ class BootstrapCliSurfaceTest(unittest.TestCase):
             text=True,
         )
 
+    def _seed_ready_tasks(self, project_id: str, count: int = 1) -> None:
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        for index in range(count):
+            audit_id = f"aud_ready_{index}"
+            task_id = f"tsk_ready_{index}"
+            store.create_audit(audit_id, project_id, "published", f"Ready audit {index}", "Audit body")
+            store.create_task(task_id, project_id, audit_id, "ready", "high", "low", "low", "feature", f"Ready task {index}")
+        store.db.commit()
+
+    def _seed_lifecycle_task(self, project_id: str, *, task_id: str, audit_id: str, lifecycle_key: str, state: str = "ready") -> None:
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.create_audit(audit_id, project_id, "published", f"Lifecycle audit {audit_id}", "Audit body")
+        store.create_task(
+            task_id,
+            project_id,
+            audit_id,
+            state,
+            "high",
+            "low",
+            "low",
+            "ops",
+            "Lifecycle task",
+            justification_json=json.dumps(
+                {
+                    "summary": "Existing lifecycle task",
+                    "evidence_refs": [lifecycle_key],
+                    "expected_impact": "Allow lifecycle reuse",
+                },
+                sort_keys=True,
+            ),
+            execution_context_json=json.dumps({"project_id": project_id}, sort_keys=True),
+            lifecycle_key=lifecycle_key,
+        )
+        store.db.commit()
+
+    def _assert_owner_local_schema_upgraded(self) -> None:
+        user_version, columns = read_owner_local_schema_state(self.node_home / "node.sqlite3")
+        self.assertEqual(user_version, 1)
+        self.assertIn("lifecycle_key", columns)
+
+    def _seed_active_claim_for_task(self, *, task_id: str, session_id: str, plan: str) -> None:
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        invitation_fingerprint = store.ensure_local_node_actor(node_id=bootstrap.local_node_id)
+        actor = ActorIdentity(
+            node_id=bootstrap.local_node_id,
+            agent_id="agent-conflict",
+            session_id=session_id,
+            node_proof=derive_node_proof(
+                node_id=bootstrap.local_node_id,
+                agent_id="agent-conflict",
+                session_id=session_id,
+                invitation_fingerprint=invitation_fingerprint,
+            ),
+        )
+        claims = ClaimRegistry(store.db)
+        claim = claims.claim_task(
+            claim_id=f"clm_{task_id}",
+            project_id=store.get_task(task_id)["project_id"],
+            task_id=task_id,
+            actor=actor,
+            plan=plan,
+            lease_started_at="2026-06-19T18:00:00Z",
+            lease_expires_at="2099-06-19T18:10:00Z",
+        )
+        store.cache_claim(task_id, claim.claim_id, claim.status, claim.lease_expires_at, claim.node_id, claim.agent_id, claim.session_id, claim.plan)
+        store.update_task_state(task_id, state="claimed", active_claim_session_id=session_id)
+        store.db.commit()
+
     def test_status_reports_uninitialized_envelope(self) -> None:
         exit_code, payload = self.invoke("status", "--repo-root", str(self.repo_root), "--node-home", str(self.node_home))
 
@@ -415,6 +545,608 @@ class BootstrapCliSurfaceTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["error"]["code"], "INVALID_BOOTSTRAP_STATE")
+
+    def test_status_and_read_upgrade_supported_stale_adopted_schema(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+
+        downgrade_owner_local_tasks_schema(self.node_home / "node.sqlite3")
+        exit_code, status_payload = self.invoke("status", "--repo-root", str(self.repo_root), "--node-home", str(self.node_home))
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(status_payload["status"], "ok")
+        self.assertEqual(status_payload["data"]["bootstrap_state"], "adopted")
+        self._assert_owner_local_schema_upgraded()
+
+        downgrade_owner_local_tasks_schema(self.node_home / "node.sqlite3")
+        exit_code, read_payload = self.invoke(
+            "read",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:00:00Z",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(read_payload["status"], "ok")
+        self.assertEqual(read_payload["data"]["bootstrap_state"], "adopted")
+        self.assertEqual(read_payload["data"]["entrypoint"]["project_id"], adopted.adopted_project["project_id"])
+        self._assert_owner_local_schema_upgraded()
+
+    def test_current_returns_adopted_project_summary(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=3)
+
+        exit_code, payload = self.invoke(
+            "current",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:45:00Z",
+            "--ready-limit",
+            "2",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["bootstrap_state"], "adopted")
+        self.assertEqual(payload["data"]["adopted_project"], adopted.adopted_project)
+        self.assertEqual(payload["data"]["as_of"], "2026-06-19T13:45:00Z")
+        self.assertEqual(payload["data"]["entrypoint"]["project_id"], adopted.adopted_project["project_id"])
+        self.assertEqual(payload["data"]["entrypoint"]["generated_at"], "2026-06-19T13:45:00Z")
+        self.assertEqual(payload["data"]["sync_status"]["project_id"], adopted.adopted_project["project_id"])
+        self.assertTrue(payload["data"]["sync_status"]["degraded"])
+        self.assertEqual(payload["data"]["ready_tasks"]["index_name"], "ready")
+        self.assertEqual(payload["data"]["ready_tasks"]["limit"], 2)
+        self.assertEqual(len(payload["data"]["ready_tasks"]["tasks"]), 2)
+
+    def test_current_upgrades_supported_stale_adopted_schema_before_runtime_reads(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=1)
+        downgrade_owner_local_tasks_schema(self.node_home / "node.sqlite3")
+
+        exit_code, payload = self.invoke(
+            "current",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:45:00Z",
+            "--ready-limit",
+            "1",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["adopted_project"], adopted.adopted_project)
+        self.assertEqual(len(payload["data"]["ready_tasks"]["tasks"]), 1)
+        self._assert_owner_local_schema_upgraded()
+
+    def test_current_reports_schema_compatibility_error_for_unsupported_owner_local_drift(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        bootstrap.adopt_repo(interactive=False)
+
+        write_incompatible_owner_local_schema(self.node_home / "node.sqlite3", user_version=99, include_project_id=True)
+        exit_code, payload = self.invoke(
+            "current",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:45:00Z",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "LOCAL_SCHEMA_COMPATIBILITY_ERROR")
+
+    def test_current_reports_schema_compatibility_error_for_unsafe_owner_local_drift(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        bootstrap.adopt_repo(interactive=False)
+
+        write_incompatible_owner_local_schema(self.node_home / "node.sqlite3", user_version=0, include_project_id=False)
+        exit_code, payload = self.invoke(
+            "current",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:45:00Z",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "LOCAL_SCHEMA_COMPATIBILITY_ERROR")
+
+    def test_current_defaults_as_of_to_normalized_utc_timestamp(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=1)
+
+        frozen_now = datetime(2026, 6, 19, 18, 5, 7, 123456, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            exit_code, payload = self.invoke(
+                "current",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["as_of"], "2026-06-19T18:05:07Z")
+        self.assertEqual(payload["data"]["entrypoint"]["generated_at"], "2026-06-19T18:05:07Z")
+
+    def test_tasks_ready_returns_adopted_ready_queue(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=3)
+
+        exit_code, payload = self.invoke(
+            "tasks-ready",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T13:45:00Z",
+            "--limit",
+            "2",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["bootstrap_state"], "adopted")
+        self.assertEqual(payload["data"]["adopted_project"], adopted.adopted_project)
+        self.assertEqual(payload["data"]["index_name"], "ready")
+        self.assertEqual(payload["data"]["as_of"], "2026-06-19T13:45:00Z")
+        self.assertEqual(payload["data"]["count"], 2)
+        self.assertEqual(payload["data"]["limit"], 2)
+        self.assertEqual(len(payload["data"]["tasks"]), 2)
+
+    def test_tasks_ready_defaults_as_of_to_normalized_utc_timestamp(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=1)
+
+        frozen_now = datetime(2026, 6, 19, 18, 5, 7, 123456, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            exit_code, payload = self.invoke(
+                "tasks-ready",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["as_of"], "2026-06-19T18:05:07Z")
+
+    def test_tasks_ready_rejects_non_positive_limit(self) -> None:
+        completed = self.invoke_subprocess_raw(
+            "tasks-ready",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--limit",
+            "0",
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stderr, "")
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENTS")
+        self.assertIn("positive integer", payload["error"]["message"])
+
+    def test_tasks_claim_claims_ready_task_with_generated_lease_fields(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_ready_tasks(adopted.adopted_project["project_id"], count=1)
+
+        frozen_now = datetime(2026, 6, 19, 18, 5, 7, 123456, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            exit_code, payload = self.invoke(
+                "tasks-claim",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--task-id",
+                "tsk_ready_0",
+                "--plan",
+                "Implement the task",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "claimed")
+        self.assertEqual(payload["data"]["bootstrap_state"], "adopted")
+        self.assertEqual(payload["data"]["adopted_project"], adopted.adopted_project)
+        self.assertEqual(payload["data"]["task_id"], "tsk_ready_0")
+        self.assertEqual(payload["data"]["lease_started_at"], "2026-06-19T18:05:07Z")
+        self.assertEqual(payload["data"]["lease_expires_at"], "2026-06-19T18:10:07Z")
+        self.assertEqual(payload["data"]["state"], "claimed")
+        self.assertEqual(payload["data"]["plan"], "Implement the task")
+        self.assertTrue(payload["data"]["claim_id"].startswith("clm_"))
+
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        self.assertEqual(store.get_task("tsk_ready_0")["state"], "claimed")
+        cached_claim = store.get_cached_claim("tsk_ready_0")
+        self.assertIsNotNone(cached_claim)
+        self.assertEqual(cached_claim["plan"], "Implement the task")
+
+    def test_tasks_claim_rejects_missing_task_id(self) -> None:
+        completed = self.invoke_subprocess_raw(
+            "tasks-claim",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--plan",
+            "Implement the task",
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stderr, "")
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENTS")
+        self.assertIn("--task-id", payload["error"]["message"])
+
+    def test_tasks_claim_rejects_non_positive_lease_minutes(self) -> None:
+        completed = self.invoke_subprocess_raw(
+            "tasks-claim",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--task-id",
+            "tsk_ready_0",
+            "--plan",
+            "Implement the task",
+            "--lease-minutes",
+            "0",
+        )
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertEqual(completed.stderr, "")
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENTS")
+        self.assertIn("positive integer", payload["error"]["message"])
+
+    def test_tasks_claim_rejects_non_ready_task(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.create_audit("aud_blocked", adopted.adopted_project["project_id"], "published", "Blocked audit", "Audit body")
+        store.create_task("tsk_blocked", adopted.adopted_project["project_id"], "aud_blocked", "blocked", "high", "low", "low", "feature", "Blocked task", blocked_reason="awaiting input", blocked_evidence="artifact://blocked", blocked_next_step="wait")
+        store.db.commit()
+
+        exit_code, payload = self.invoke(
+            "tasks-claim",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--task-id",
+            "tsk_blocked",
+            "--plan",
+            "Implement the task",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("only ready tasks can be claimed", payload["error"]["message"])
+
+    def test_tasks_start_reuses_existing_lifecycle_task(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_lifecycle_task(
+            adopted.adopted_project["project_id"],
+            task_id="tsk_lifecycle_ready",
+            audit_id="aud_lifecycle_ready",
+            lifecycle_key="lifecycle://cli/reuse",
+        )
+
+        frozen_now = datetime(2026, 6, 19, 18, 15, 0, 654321, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            exit_code, payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/reuse",
+                "--plan",
+                "Resume lifecycle work",
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["data"]["bootstrap_state"], "adopted")
+        self.assertEqual(payload["data"]["adopted_project"], adopted.adopted_project)
+        self.assertEqual(payload["data"]["task_id"], "tsk_lifecycle_ready")
+        self.assertEqual(payload["data"]["state"], "in_progress")
+        self.assertFalse(payload["data"]["created_task"])
+        self.assertEqual(payload["data"]["lease_started_at"], "2026-06-19T18:15:00Z")
+
+    def test_tasks_start_rejects_lifecycle_task_claimed_by_another_session(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_lifecycle_task(
+            adopted.adopted_project["project_id"],
+            task_id="tsk_lifecycle_claimed",
+            audit_id="aud_lifecycle_claimed",
+            lifecycle_key="lifecycle://cli/claimed-conflict",
+        )
+        self._seed_active_claim_for_task(
+            task_id="tsk_lifecycle_claimed",
+            session_id="sess-other-owner",
+            plan="Other session is already working",
+        )
+
+        exit_code, payload = self.invoke(
+            "tasks-start",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/claimed-conflict",
+            "--plan",
+            "Attempt conflicting lifecycle start",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "CLAIM_CONFLICT")
+        self.assertIn("owned by another session", payload["error"]["message"])
+
+    def test_tasks_start_creates_lifecycle_task_from_audit_seed(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.create_audit("aud_create", adopted.adopted_project["project_id"], "published", "Create audit", "Audit body")
+        store.db.commit()
+
+        exit_code, payload = self.invoke(
+            "tasks-start",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/create",
+            "--plan",
+            "Create lifecycle work",
+            "--origin-audit-id",
+            "aud_create",
+            "--description",
+            "Lifecycle-created task",
+            "--priority",
+            "high",
+            "--effort",
+            "low",
+            "--risk",
+            "low",
+            "--task-type",
+            "ops",
+            "--justification-json",
+            '{"summary":"Create lifecycle task","evidence_refs":["artifact://cli/create"],"expected_impact":"Track start automation"}',
+            "--execution-context-json",
+            json.dumps({"project_id": adopted.adopted_project["project_id"], "steps": ["claim", "work"]}, sort_keys=True),
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertTrue(payload["data"]["created_task"])
+        created = store.get_task(payload["data"]["task_id"])
+        self.assertEqual(created["lifecycle_key"], "lifecycle://cli/create")
+        self.assertEqual(created["state"], "in_progress")
+
+    def test_tasks_start_rejects_cross_project_execution_context(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.create_audit("aud_cross", adopted.adopted_project["project_id"], "published", "Cross audit", "Audit body")
+        store.db.commit()
+
+        exit_code, payload = self.invoke(
+            "tasks-start",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/cross",
+            "--plan",
+            "Reject cross-project lifecycle work",
+            "--origin-audit-id",
+            "aud_cross",
+            "--description",
+            "Should fail",
+            "--priority",
+            "high",
+            "--effort",
+            "low",
+            "--risk",
+            "low",
+            "--task-type",
+            "ops",
+            "--justification-json",
+            '{"summary":"Reject bad context","evidence_refs":["artifact://cli/cross"],"expected_impact":"Prevent cross-project mutation"}',
+            "--execution-context-json",
+            '{"source_project_id":"prj_other"}',
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("must stay within the adopted project", payload["error"]["message"])
+
+    def test_tasks_finish_closes_lifecycle_task_as_done(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_lifecycle_task(
+            adopted.adopted_project["project_id"],
+            task_id="tsk_lifecycle_finish_done",
+            audit_id="aud_lifecycle_finish_done",
+            lifecycle_key="lifecycle://cli/finish-done",
+        )
+
+        frozen_now = datetime(2026, 6, 19, 18, 20, 0, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            start_exit_code, _start_payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/finish-done",
+                "--plan",
+                "Resume lifecycle work",
+            )
+        self.assertEqual(start_exit_code, 0)
+
+        exit_code, payload = self.invoke(
+            "tasks-finish",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/finish-done",
+            "--outcome",
+            "done",
+            "--as-of",
+            "2026-06-19T18:24:00Z",
+            "--done-result",
+            "Lifecycle work completed",
+            "--done-artifacts",
+            "artifact://cli/finish-done",
+            "--done-references",
+            "ref://cli/finish-done",
+            "--done-expected-impact",
+            "Close the lifecycle task",
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["data"]["state"], "done")
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        self.assertEqual(store.get_task("tsk_lifecycle_finish_done")["done_result"], "Lifecycle work completed")
+        self.assertIsNone(store.get_cached_claim("tsk_lifecycle_finish_done"))
+
+    def test_tasks_finish_rejects_expired_claim(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_lifecycle_task(
+            adopted.adopted_project["project_id"],
+            task_id="tsk_lifecycle_finish_expired",
+            audit_id="aud_lifecycle_finish_expired",
+            lifecycle_key="lifecycle://cli/finish-expired",
+        )
+
+        frozen_now = datetime(2026, 6, 19, 18, 20, 0, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            start_exit_code, _start_payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/finish-expired",
+                "--plan",
+                "Resume lifecycle work",
+            )
+        self.assertEqual(start_exit_code, 0)
+
+        exit_code, payload = self.invoke(
+            "tasks-finish",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/finish-expired",
+            "--outcome",
+            "blocked",
+            "--as-of",
+            "2026-06-19T18:26:00Z",
+            "--blocked-reason",
+            "Lease expired before closeout",
+            "--blocked-evidence",
+            "artifact://cli/finish-expired",
+            "--blocked-next-step",
+            "Reconcile the lifecycle task again",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "CLAIM_EXPIRED")
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        self.assertEqual(store.get_task("tsk_lifecycle_finish_expired")["state"], "ready")
+
+    def test_help_uses_english_lifecycle_terms(self) -> None:
+        completed = self.invoke_subprocess_raw("--help")
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("Owner-local adopted-project JSON CLI", completed.stdout)
+        self.assertIn("tasks-start", completed.stdout)
+        self.assertIn("tasks-finish", completed.stdout)
+        self.assertIn("--lifecycle-key", completed.stdout)
+        self.assertIn("--origin-audit-id", completed.stdout)
+        self.assertIn("--done-result", completed.stdout)
+        self.assertIn("--blocked-reason", completed.stdout)
+        self.assertIn("Reconcile owner-local same-project lifecycle work", completed.stdout)
+        self.assertIn("Close owner-local adopted lifecycle work", completed.stdout)
 
     def test_missing_command_returns_json_error_envelope(self) -> None:
         completed = self.invoke_subprocess_raw("--repo-root", str(self.repo_root), "--node-home", str(self.node_home))

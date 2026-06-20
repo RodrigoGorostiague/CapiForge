@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from runtime.node.bootstrap import DEFAULT_BOOTSTRAP_LOCK_TIMEOUT_SECONDS, BootstrapState, NodeBootstrap
+from runtime.node.current import claim_ready_task, read_current, read_ready_tasks, tasks_reconcile_finish, tasks_reconcile_start
 from runtime.node.index import INDEXES
 from runtime.node.mcp import NodeMCPSurface
 from runtime.node.router import NodeRouter
@@ -102,20 +103,22 @@ def _local_actor(state: BootstrapState) -> ActorIdentity:
 @contextmanager
 def _surface_context(options: ServerOptions) -> Iterator[SurfaceContext]:
     bootstrap = _bootstrap(options)
-    state = bootstrap.require_adopted(
-        lock_timeout_seconds=options.lock_timeout_seconds,
+    with bootstrap.bootstrap_session(
+        command="mcp_surface",
+        timeout=options.lock_timeout_seconds,
         interactive=False,
+        verbose=False,
         recover_stale_lock=options.recover_stale_lock,
-    )
-    store = NodeStore.from_file(state.node_db_path)
-    try:
-        yield SurfaceContext(
-            state=state,
-            surface=NodeMCPSurface(store=store, router=NodeRouter(store), local_node_id=state.local_node_id),
-            store=store,
-        )
-    finally:
-        store.close()
+    ):
+        state, store = bootstrap._open_adopted_store_unlocked()
+        try:
+            yield SurfaceContext(
+                state=state,
+                surface=NodeMCPSurface(store=store, router=NodeRouter(store), local_node_id=state.local_node_id),
+                store=store,
+            )
+        finally:
+            store.close()
 
 
 def _workspace_get_current(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -175,6 +178,187 @@ def _sync_status(options: ServerOptions, arguments: dict[str, Any]) -> dict[str,
         return {"status": result["status"], "data": {"adopted_project": context.state.adopted_project, **result["data"]}}
 
 
+def _current_get(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
+    as_of = arguments.get("as_of")
+    ready_limit = arguments.get("ready_limit", 10)
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "current_get requires as_of to be a non-empty string when provided")
+    if not isinstance(ready_limit, int) or ready_limit <= 0:
+        raise SurfaceError("INVALID_ARGUMENTS", "current_get requires ready_limit to be a positive integer")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "ok",
+        "data": read_current(
+            bootstrap,
+            as_of=as_of,
+            ready_limit=ready_limit,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=LOCAL_AGENT_ID,
+            session_id=LOCAL_SESSION_ID,
+            command="current_get",
+        ),
+    }
+
+
+def _tasks_ready_get(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
+    as_of = arguments.get("as_of")
+    limit = arguments.get("limit", 20)
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_ready_get requires as_of to be a non-empty string when provided")
+    if not isinstance(limit, int) or limit <= 0:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_ready_get requires limit to be a positive integer")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "ok",
+        "data": read_ready_tasks(
+            bootstrap,
+            as_of=as_of,
+            limit=limit,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=LOCAL_AGENT_ID,
+            session_id=LOCAL_SESSION_ID,
+            command="tasks_ready_get",
+        ),
+    }
+
+
+def _tasks_claim(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
+    task_id = arguments.get("task_id")
+    plan = arguments.get("plan")
+    lease_minutes = arguments.get("lease_minutes", 5)
+    if not isinstance(task_id, str) or not task_id:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_claim requires task_id to be a non-empty string")
+    if not isinstance(plan, str) or not plan:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_claim requires plan to be a non-empty string")
+    if not isinstance(lease_minutes, int) or lease_minutes <= 0:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_claim requires lease_minutes to be a positive integer")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "claimed",
+        "data": claim_ready_task(
+            bootstrap,
+            task_id=task_id,
+            plan=plan,
+            lease_minutes=lease_minutes,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=LOCAL_AGENT_ID,
+            session_id=LOCAL_SESSION_ID,
+            command="tasks_claim",
+        ),
+    }
+
+
+def _tasks_reconcile_start(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
+    lifecycle_key = arguments.get("lifecycle_key")
+    plan = arguments.get("plan")
+    lease_minutes = arguments.get("lease_minutes", 5)
+    origin_audit_id = arguments.get("origin_audit_id")
+    description = arguments.get("description")
+    priority = arguments.get("priority")
+    effort = arguments.get("effort")
+    risk = arguments.get("risk")
+    task_type = arguments.get("task_type")
+    justification = arguments.get("justification")
+    execution_context = arguments.get("execution_context")
+    if not isinstance(lifecycle_key, str) or not lifecycle_key:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_start requires lifecycle_key to be a non-empty string")
+    if not isinstance(plan, str) or not plan:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_start requires plan to be a non-empty string")
+    if not isinstance(lease_minutes, int) or lease_minutes <= 0:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_start requires lease_minutes to be a positive integer")
+    for field_name, value in (
+        ("origin_audit_id", origin_audit_id),
+        ("description", description),
+        ("priority", priority),
+        ("effort", effort),
+        ("risk", risk),
+        ("task_type", task_type),
+    ):
+        if value is not None and (not isinstance(value, str) or not value):
+            raise SurfaceError("INVALID_ARGUMENTS", f"tasks_reconcile_start requires {field_name} to be a non-empty string when provided")
+    if justification is not None and not isinstance(justification, dict):
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_start requires justification to be an object when provided")
+    if execution_context is not None and not isinstance(execution_context, dict):
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_start requires execution_context to be an object when provided")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "accepted",
+        "data": tasks_reconcile_start(
+            bootstrap,
+            lifecycle_key=lifecycle_key,
+            plan=plan,
+            lease_minutes=lease_minutes,
+            origin_audit_id=origin_audit_id,
+            description=description,
+            priority=priority,
+            effort=effort,
+            risk=risk,
+            task_type=task_type,
+            justification=justification,
+            execution_context=execution_context,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=LOCAL_AGENT_ID,
+            session_id=LOCAL_SESSION_ID,
+            command="tasks_reconcile_start",
+        ),
+    }
+
+
+def _tasks_reconcile_finish(options: ServerOptions, arguments: dict[str, Any]) -> dict[str, Any]:
+    lifecycle_key = arguments.get("lifecycle_key")
+    outcome = arguments.get("outcome")
+    as_of = arguments.get("as_of")
+    done_result = arguments.get("done_result")
+    done_artifacts = arguments.get("done_artifacts")
+    done_references = arguments.get("done_references")
+    done_expected_impact = arguments.get("done_expected_impact")
+    blocked_reason = arguments.get("blocked_reason")
+    blocked_evidence = arguments.get("blocked_evidence")
+    blocked_next_step = arguments.get("blocked_next_step")
+    for field_name, value in (("lifecycle_key", lifecycle_key), ("outcome", outcome)):
+        if not isinstance(value, str) or not value:
+            raise SurfaceError("INVALID_ARGUMENTS", f"tasks_reconcile_finish requires {field_name} to be a non-empty string")
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks_reconcile_finish requires as_of to be a non-empty string when provided")
+    for field_name, value in (
+        ("done_result", done_result),
+        ("done_artifacts", done_artifacts),
+        ("done_references", done_references),
+        ("done_expected_impact", done_expected_impact),
+        ("blocked_reason", blocked_reason),
+        ("blocked_evidence", blocked_evidence),
+        ("blocked_next_step", blocked_next_step),
+    ):
+        if value is not None and (not isinstance(value, str) or not value):
+            raise SurfaceError("INVALID_ARGUMENTS", f"tasks_reconcile_finish requires {field_name} to be a non-empty string when provided")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "accepted",
+        "data": tasks_reconcile_finish(
+            bootstrap,
+            lifecycle_key=lifecycle_key,
+            outcome=outcome,
+            as_of=as_of,
+            done_result=done_result,
+            done_artifacts=done_artifacts,
+            done_references=done_references,
+            done_expected_impact=done_expected_impact,
+            blocked_reason=blocked_reason,
+            blocked_evidence=blocked_evidence,
+            blocked_next_step=blocked_next_step,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=LOCAL_AGENT_ID,
+            session_id=LOCAL_SESSION_ID,
+            command="tasks_reconcile_finish",
+        ),
+    }
+
+
 TOOLS: dict[str, dict[str, Any]] = {
     "workspace_get_current": {
         "description": "Read the adopted workspace and its locally visible projects.",
@@ -217,6 +401,96 @@ TOOLS: dict[str, dict[str, Any]] = {
         "description": "Read sync visibility for the adopted project. Local-only bootstrap returns degraded non-authoritative status.",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "handler": _sync_status,
+    },
+    "current_get": {
+        "description": "Read the adopted project's aggregate current payload, matching the CLI current flow.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional deterministic timestamp for generated output, for example 2026-06-19T13:45:00Z.",
+                },
+                "ready_limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+            },
+            "additionalProperties": False,
+        },
+        "handler": _current_get,
+    },
+    "tasks_ready_get": {
+        "description": "Read the adopted ready task queue, matching the CLI tasks ready flow.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional deterministic timestamp used for expired claim evaluation.",
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+            },
+            "additionalProperties": False,
+        },
+        "handler": _tasks_ready_get,
+    },
+    "tasks_claim": {
+        "description": "Claim an adopted ready task, matching the CLI tasks claim flow.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "plan": {"type": "string"},
+                "lease_minutes": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 5},
+            },
+            "required": ["task_id", "plan"],
+            "additionalProperties": False,
+        },
+        "handler": _tasks_claim,
+    },
+    "tasks_reconcile_start": {
+        "description": "Reconcile owner-local same-project lifecycle work into an adopted in-progress task.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lifecycle_key": {"type": "string"},
+                "plan": {"type": "string"},
+                "lease_minutes": {"type": "integer", "minimum": 1, "maximum": 1440, "default": 5},
+                "origin_audit_id": {"type": "string"},
+                "description": {"type": "string"},
+                "priority": {"type": "string"},
+                "effort": {"type": "string"},
+                "risk": {"type": "string"},
+                "task_type": {"type": "string"},
+                "justification": {"type": "object", "additionalProperties": True},
+                "execution_context": {"type": "object", "additionalProperties": True},
+            },
+            "required": ["lifecycle_key", "plan"],
+            "additionalProperties": False,
+        },
+        "handler": _tasks_reconcile_start,
+    },
+    "tasks_reconcile_finish": {
+        "description": "Close owner-local adopted lifecycle work to done or blocked when the active claim is still valid.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "lifecycle_key": {"type": "string"},
+                "outcome": {"type": "string", "enum": ["done", "blocked"]},
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional deterministic timestamp used for expired claim evaluation.",
+                },
+                "done_result": {"type": "string"},
+                "done_artifacts": {"type": "string"},
+                "done_references": {"type": "string"},
+                "done_expected_impact": {"type": "string"},
+                "blocked_reason": {"type": "string"},
+                "blocked_evidence": {"type": "string"},
+                "blocked_next_step": {"type": "string"},
+            },
+            "required": ["lifecycle_key", "outcome"],
+            "additionalProperties": False,
+        },
+        "handler": _tasks_reconcile_finish,
     },
 }
 
@@ -284,7 +558,7 @@ class MCPServer:
                 "protocolVersion": PROTOCOL_VERSION if requested_version != PROTOCOL_VERSION else requested_version,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
-                "instructions": "CapiForge exposes read-only local node tools over stdio for adopted repositories.",
+                "instructions": "CapiForge exposes owner-local node tools over stdio for adopted repositories, including CLI-aligned claim and lifecycle start/finish flows.",
             },
         )
 

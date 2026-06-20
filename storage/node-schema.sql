@@ -1,4 +1,5 @@
 PRAGMA foreign_keys = ON;
+PRAGMA user_version = 1;
 
 CREATE TABLE workspaces (
   workspace_id TEXT PRIMARY KEY,
@@ -54,6 +55,7 @@ CREATE TABLE tasks (
   justification_json TEXT NOT NULL,
   execution_context_json TEXT NOT NULL,
   active_claim_session_id TEXT,
+  lifecycle_key TEXT,
   blocked_reason TEXT,
   blocked_evidence TEXT,
   blocked_next_step TEXT,
@@ -107,6 +109,37 @@ CREATE TABLE claims_local_cache (
   holder_session_id TEXT NOT NULL,
   plan TEXT NOT NULL
 );
+
+CREATE TABLE nodes (
+  node_id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  invitation_fingerprint TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('pending','active','revoked')),
+  last_seen_at TEXT
+);
+
+CREATE TABLE claim_leases (
+  claim_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  node_id TEXT NOT NULL REFERENCES nodes(node_id),
+  agent_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  plan TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active','renewed','released','expired')),
+  lease_started_at TEXT NOT NULL,
+  lease_expires_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_claim_leases_one_active
+ON claim_leases(project_id, task_id)
+WHERE status IN ('active','renewed');
+
+CREATE INDEX idx_claim_leases_lookup ON claim_leases(project_id, task_id, status, lease_expires_at);
+
+CREATE UNIQUE INDEX idx_tasks_project_lifecycle_key
+ON tasks(project_id, lifecycle_key)
+WHERE lifecycle_key IS NOT NULL;
 
 CREATE TABLE artifact_refs (
   artifact_ref_id TEXT PRIMARY KEY,

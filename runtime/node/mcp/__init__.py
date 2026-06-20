@@ -175,7 +175,17 @@ class NodeMCPSurface:
             self.store.update_task_state(task_id, state="claimed", active_claim_session_id=actor.session_id)
         except ClaimConflictError as exc:
             raise SurfaceError("CLAIM_CONFLICT", str(exc)) from exc
-        return {"status": "claimed", "data": {"claim_id": claim.claim_id, "task_id": claim.task_id, "lease_expires_at": claim.lease_expires_at}}
+        return {
+            "status": "claimed",
+            "data": {
+                "claim_id": claim.claim_id,
+                "task_id": claim.task_id,
+                "lease_started_at": claim.lease_started_at,
+                "lease_expires_at": claim.lease_expires_at,
+                "state": "claimed",
+                "plan": claim.plan,
+            },
+        }
 
     def tasks_release(
         self,
@@ -218,6 +228,7 @@ class NodeMCPSurface:
         justification,
         execution_context: dict,
         initial_state: str = "proposed",
+        lifecycle_key: str | None = None,
         source_project_id: str | None = None,
     ) -> dict:
         audit = self.store.get_audit(audit_id)
@@ -255,8 +266,23 @@ class NodeMCPSurface:
             description,
             justification_json=json.dumps({"summary": justification.summary, "evidence_refs": justification.evidence_refs, "expected_impact": justification.expected_impact}, sort_keys=True),
             execution_context_json=json.dumps(execution_context, sort_keys=True),
+            lifecycle_key=lifecycle_key,
         )
-        self.store.record_task_mutation(mutation_id, task_id, actor.node_id, actor.agent_id, actor.session_id, json.dumps({"request_kind": "tasks.create_from_audit", "audit_id": audit_id, "summary": justification.summary, "evidence_refs": justification.evidence_refs, "expected_impact": justification.expected_impact}, sort_keys=True), "canonical")
+        mutation_payload = {
+            "request_kind": "tasks.create_from_audit",
+            "audit_id": audit_id,
+            "summary": justification.summary,
+            "evidence_refs": justification.evidence_refs,
+            "expected_impact": justification.expected_impact,
+        }
+        if lifecycle_key:
+            mutation_payload["lifecycle_key"] = lifecycle_key
+            mutation_payload["lifecycle_creator"] = {
+                "node_id": actor.node_id,
+                "agent_id": actor.agent_id,
+                "session_id": actor.session_id,
+            }
+        self.store.record_task_mutation(mutation_id, task_id, actor.node_id, actor.agent_id, actor.session_id, json.dumps(mutation_payload, sort_keys=True), "canonical")
         return {"status": "accepted", "data": {"mutation_id": mutation_id, "task_id": task_id, "origin_audit_id": audit_id, "authority_mode": "canonical"}}
 
     def tasks_transition(

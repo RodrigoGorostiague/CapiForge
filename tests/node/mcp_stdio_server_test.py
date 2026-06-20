@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import shutil
 import subprocess
 import tempfile
@@ -7,8 +8,10 @@ import tomllib
 import unittest
 from pathlib import Path
 
+from runtime.coordinator.claims import ClaimRegistry
 from runtime.node.bootstrap import NodeBootstrap
 from runtime.node.store import NodeStore
+from runtime.shared.ids import ActorIdentity, derive_node_proof
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +52,47 @@ def _materialize_console_script() -> Path:
     return command_path
 
 
+def downgrade_owner_local_tasks_schema(db_path: Path) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("DROP INDEX IF EXISTS idx_tasks_project_lifecycle_key")
+        connection.execute("ALTER TABLE tasks DROP COLUMN lifecycle_key")
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def read_owner_local_schema_state(db_path: Path) -> tuple[int, list[str]]:
+    connection = sqlite3.connect(db_path)
+    try:
+        user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(tasks)").fetchall()]
+        return user_version, columns
+    finally:
+        connection.close()
+
+
+def write_incompatible_owner_local_schema(db_path: Path, *, user_version: int, include_project_id: bool) -> None:
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.executescript(
+            """
+            DROP TABLE IF EXISTS tasks;
+            CREATE TABLE tasks (
+              task_id TEXT PRIMARY KEY
+            );
+            """
+        )
+        if include_project_id:
+            connection.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT 'prj_1'")
+        connection.execute("ALTER TABLE tasks ADD COLUMN lifecycle_key TEXT")
+        connection.execute(f"PRAGMA user_version = {user_version}")
+        connection.commit()
+    finally:
+        connection.close()
+
+
 class MCPStdioServerSmokeTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -57,7 +101,7 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         if hasattr(cls, "command_path"):
-            install_root = cls.command_path.parent.parent
+            install_root = cls.command_path.parent
             shutil.rmtree(install_root, ignore_errors=True)
 
     def setUp(self) -> None:
@@ -75,6 +119,28 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.addCleanup(store.close)
         store.create_audit("aud_ready", self.project_id, "published", "Ready audit", "Audit body")
         store.create_task("tsk_ready", self.project_id, "aud_ready", "ready", "high", "low", "low", "feature", "Ready task")
+        store.create_audit("aud_lifecycle", self.project_id, "published", "Lifecycle audit", "Audit body")
+        store.create_task(
+            "tsk_lifecycle_ready",
+            self.project_id,
+            "aud_lifecycle",
+            "ready",
+            "high",
+            "low",
+            "low",
+            "ops",
+            "Lifecycle ready task",
+            justification_json=json.dumps(
+                {
+                    "summary": "Existing lifecycle task",
+                    "evidence_refs": ["lifecycle://stdio/reuse"],
+                    "expected_impact": "Allow reuse",
+                },
+                sort_keys=True,
+            ),
+            execution_context_json=json.dumps({"project_id": self.project_id}, sort_keys=True),
+            lifecycle_key="lifecycle://stdio/reuse",
+        )
         store.db.commit()
 
         self.process = subprocess.Popen(
@@ -133,6 +199,36 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(content[0]["type"], "text")
         return json.loads(content[0]["text"])
 
+    def _seed_active_claim_for_task(self, *, task_id: str, session_id: str, plan: str) -> None:
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        invitation_fingerprint = store.ensure_local_node_actor(node_id=bootstrap.local_node_id)
+        actor = ActorIdentity(
+            node_id=bootstrap.local_node_id,
+            agent_id="agent-conflict",
+            session_id=session_id,
+            node_proof=derive_node_proof(
+                node_id=bootstrap.local_node_id,
+                agent_id="agent-conflict",
+                session_id=session_id,
+                invitation_fingerprint=invitation_fingerprint,
+            ),
+        )
+        claims = ClaimRegistry(store.db)
+        claim = claims.claim_task(
+            claim_id=f"clm_{task_id}",
+            project_id=store.get_task(task_id)["project_id"],
+            task_id=task_id,
+            actor=actor,
+            plan=plan,
+            lease_started_at="2026-06-19T18:00:00Z",
+            lease_expires_at="2099-06-19T18:10:00Z",
+        )
+        store.cache_claim(task_id, claim.claim_id, claim.status, claim.lease_expires_at, claim.node_id, claim.agent_id, claim.session_id, claim.plan)
+        store.update_task_state(task_id, state="claimed", active_claim_session_id=session_id)
+        store.db.commit()
+
     def test_stdio_server_supports_real_initialize_and_read_tool_flow(self) -> None:
         initialize = self._request(
             1,
@@ -145,14 +241,34 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         )
         self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
         self.assertIn("tools", initialize["result"]["capabilities"])
+        self.assertIn("owner-local node tools", initialize["result"]["instructions"])
 
         self._notify("notifications/initialized")
 
         tools = self._request(2, "tools/list")
+        tool_descriptions = {tool["name"]: tool["description"] for tool in tools["result"]["tools"]}
         tool_names = {tool["name"] for tool in tools["result"]["tools"]}
         self.assertEqual(
             tool_names,
-            {"workspace_get_current", "project_entrypoint_get", "tasks_list_by_index", "sync_status"},
+            {
+                "workspace_get_current",
+                "project_entrypoint_get",
+                "tasks_list_by_index",
+                "sync_status",
+                "current_get",
+                "tasks_ready_get",
+                "tasks_claim",
+                "tasks_reconcile_start",
+                "tasks_reconcile_finish",
+            },
+        )
+        self.assertEqual(
+            tool_descriptions["tasks_reconcile_start"],
+            "Reconcile owner-local same-project lifecycle work into an adopted in-progress task.",
+        )
+        self.assertEqual(
+            tool_descriptions["tasks_reconcile_finish"],
+            "Close owner-local adopted lifecycle work to done or blocked when the active claim is still valid.",
         )
 
         workspace_payload = self._tool_payload(
@@ -191,7 +307,7 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
             )
         )
         self.assertEqual(tasks_payload["status"], "ok")
-        self.assertEqual(tasks_payload["data"]["tasks"][0]["task_id"], "tsk_ready")
+        self.assertEqual({task["task_id"] for task in tasks_payload["data"]["tasks"]}, {"tsk_ready", "tsk_lifecycle_ready"})
 
         sync_payload = self._tool_payload(
             self._request(6, "tools/call", {"name": "sync_status", "arguments": {}})
@@ -199,6 +315,477 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(sync_payload["status"], "ok")
         self.assertTrue(sync_payload["data"]["degraded"])
         self.assertEqual(sync_payload["data"]["pending_routes"], 0)
+
+        current_payload = self._tool_payload(
+            self._request(
+                7,
+                "tools/call",
+                {
+                    "name": "current_get",
+                    "arguments": {"as_of": "2026-06-19T13:45:00Z", "ready_limit": 1},
+                },
+            )
+        )
+        self.assertEqual(current_payload["status"], "ok")
+        self.assertEqual(current_payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(current_payload["data"]["as_of"], "2026-06-19T13:45:00Z")
+        self.assertEqual(current_payload["data"]["ready_tasks"]["limit"], 1)
+        self.assertEqual(len(current_payload["data"]["ready_tasks"]["tasks"]), 1)
+
+        ready_payload = self._tool_payload(
+            self._request(
+                8,
+                "tools/call",
+                {
+                    "name": "tasks_ready_get",
+                    "arguments": {"as_of": "2026-06-19T13:45:00Z", "limit": 1},
+                },
+            )
+        )
+        self.assertEqual(ready_payload["status"], "ok")
+        self.assertEqual(ready_payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(ready_payload["data"]["index_name"], "ready")
+        self.assertEqual(ready_payload["data"]["as_of"], "2026-06-19T13:45:00Z")
+        self.assertEqual(ready_payload["data"]["limit"], 1)
+        self.assertEqual(ready_payload["data"]["count"], 1)
+        self.assertEqual(len(ready_payload["data"]["tasks"]), 1)
+
+        cli_current = subprocess.run(
+            [
+                str(self.command_path),
+                "current",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--as-of",
+                "2026-06-19T13:45:00Z",
+                "--ready-limit",
+                "1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(cli_current.returncode, 0)
+        self.assertEqual(current_payload["data"], json.loads(cli_current.stdout)["data"])
+
+        cli_ready = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "ready",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--as-of",
+                "2026-06-19T13:45:00Z",
+                "--limit",
+                "1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(cli_ready.returncode, 0)
+        self.assertEqual(ready_payload["data"], json.loads(cli_ready.stdout)["data"])
+
+    def test_stdio_server_supports_tasks_claim_tool_flow(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+
+        self._notify("notifications/initialized")
+
+        claim_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "tasks_claim",
+                    "arguments": {
+                        "task_id": "tsk_ready",
+                        "plan": "Implement the ready task",
+                    },
+                },
+            )
+        )
+        self.assertEqual(claim_payload["status"], "claimed")
+        self.assertEqual(claim_payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(claim_payload["data"]["task_id"], "tsk_ready")
+        self.assertEqual(claim_payload["data"]["state"], "claimed")
+        self.assertEqual(claim_payload["data"]["plan"], "Implement the ready task")
+
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        try:
+            store.create_task(
+                "tsk_ready_cli",
+                self.project_id,
+                "aud_ready",
+                "ready",
+                "high",
+                "low",
+                "low",
+                "feature",
+                "CLI ready task",
+            )
+            store.db.commit()
+        finally:
+            store.close()
+
+        cli_claim = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "claim",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--task-id",
+                "tsk_ready_cli",
+                "--plan",
+                "Implement the ready task",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(cli_claim.returncode, 0)
+        cli_payload = json.loads(cli_claim.stdout)
+        self.assertEqual(cli_payload["status"], "claimed")
+        self.assertEqual(set(claim_payload["data"].keys()), set(cli_payload["data"].keys()))
+        self.assertEqual(cli_payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(cli_payload["data"]["task_id"], "tsk_ready_cli")
+        self.assertEqual(cli_payload["data"]["state"], "claimed")
+        self.assertEqual(cli_payload["data"]["plan"], "Implement the ready task")
+
+        ready_after_claim = self._tool_payload(
+            self._request(
+                3,
+                "tools/call",
+                {
+                    "name": "tasks_ready_get",
+                    "arguments": {"as_of": claim_payload["data"]["lease_started_at"], "limit": 5},
+                },
+            )
+        )
+        self.assertEqual(ready_after_claim["status"], "ok")
+        self.assertEqual(ready_after_claim["data"]["count"], 1)
+        self.assertEqual(ready_after_claim["data"]["tasks"][0]["task_id"], "tsk_lifecycle_ready")
+
+    def test_stdio_server_supports_tasks_reconcile_start_tool_flow(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+
+        self._notify("notifications/initialized")
+
+        reuse_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_start",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/reuse",
+                        "plan": "Resume lifecycle work",
+                    },
+                },
+            )
+        )
+        self.assertEqual(reuse_payload["status"], "accepted")
+        self.assertEqual(reuse_payload["data"]["task_id"], "tsk_lifecycle_ready")
+        self.assertEqual(reuse_payload["data"]["state"], "in_progress")
+        self.assertFalse(reuse_payload["data"]["created_task"])
+
+        cli_start = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://stdio/create",
+                "--plan",
+                "Create lifecycle work",
+                "--origin-audit-id",
+                "aud_lifecycle",
+                "--description",
+                "CLI lifecycle task",
+                "--priority",
+                "high",
+                "--effort",
+                "low",
+                "--risk",
+                "low",
+                "--task-type",
+                "ops",
+                "--justification-json",
+                '{"summary":"Create lifecycle task","evidence_refs":["artifact://stdio/create"],"expected_impact":"Track lifecycle start"}',
+                "--execution-context-json",
+                json.dumps({"project_id": self.project_id, "steps": ["claim", "work"]}, sort_keys=True),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(cli_start.returncode, 0)
+        cli_payload = json.loads(cli_start.stdout)
+        self.assertEqual(cli_payload["status"], "accepted")
+        self.assertEqual(cli_payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(cli_payload["data"]["lifecycle_key"], "lifecycle://stdio/create")
+        self.assertTrue(cli_payload["data"]["created_task"])
+
+        invalid_response = self._request(
+            3,
+            "tools/call",
+            {
+                "name": "tasks_reconcile_start",
+                "arguments": {
+                    "lifecycle_key": "lifecycle://stdio/cross",
+                    "plan": "Reject cross-project lifecycle work",
+                    "origin_audit_id": "aud_lifecycle",
+                    "description": "Should fail",
+                    "priority": "high",
+                    "effort": "low",
+                    "risk": "low",
+                    "task_type": "ops",
+                    "justification": {
+                        "summary": "Reject bad context",
+                        "evidence_refs": ["artifact://stdio/cross"],
+                        "expected_impact": "Prevent cross-project mutation",
+                    },
+                    "execution_context": {"source_project_id": "prj_other"},
+                },
+            },
+        )
+        self.assertIn("result", invalid_response)
+        self.assertTrue(invalid_response["result"]["isError"])
+        invalid_payload = json.loads(invalid_response["result"]["content"][0]["text"])
+        self.assertEqual(invalid_payload["status"], "error")
+        self.assertEqual(invalid_payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("must stay within the adopted project", invalid_payload["error"]["message"])
+
+    def test_stdio_server_reports_claim_conflict_for_lifecycle_task_owned_by_another_session(self) -> None:
+        self._seed_active_claim_for_task(
+            task_id="tsk_lifecycle_ready",
+            session_id="sess-other-owner",
+            plan="Other session is already working",
+        )
+
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        response = self._request(
+            2,
+            "tools/call",
+            {
+                "name": "tasks_reconcile_start",
+                "arguments": {
+                    "lifecycle_key": "lifecycle://stdio/reuse",
+                    "plan": "Attempt conflicting lifecycle start",
+                },
+            },
+        )
+
+        self.assertIn("result", response)
+        self.assertTrue(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "CLAIM_CONFLICT")
+        self.assertIn("owned by another session", payload["error"]["message"])
+
+    def test_stdio_server_supports_tasks_reconcile_finish_tool_flow(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        start_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_start",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/reuse",
+                        "plan": "Resume lifecycle work",
+                    },
+                },
+            )
+        )
+        self.assertEqual(start_payload["data"]["state"], "in_progress")
+
+        finish_payload = self._tool_payload(
+            self._request(
+                3,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_finish",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/reuse",
+                        "outcome": "blocked",
+                        "as_of": "2026-06-19T18:04:00Z",
+                        "blocked_reason": "Waiting on dependency",
+                        "blocked_evidence": "artifact://stdio/finish",
+                        "blocked_next_step": "Retry after dependency is resolved",
+                    },
+                },
+            )
+        )
+        self.assertEqual(finish_payload["status"], "accepted")
+        self.assertEqual(finish_payload["data"]["state"], "blocked")
+
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        self.assertEqual(store.get_task("tsk_lifecycle_ready")["blocked_reason"], "Waiting on dependency")
+        self.assertIsNone(store.get_cached_claim("tsk_lifecycle_ready"))
+
+    def test_stdio_server_upgrades_stale_owner_local_schema_before_lifecycle_reconcile_start(self) -> None:
+        downgrade_owner_local_tasks_schema(self.node_home / "node.sqlite3")
+        user_version, columns = read_owner_local_schema_state(self.node_home / "node.sqlite3")
+        self.assertEqual(user_version, 0)
+        self.assertNotIn("lifecycle_key", columns)
+
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        start_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_start",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/stale-upgrade",
+                        "plan": "Create lifecycle work on stale schema",
+                        "origin_audit_id": "aud_lifecycle",
+                        "description": "Stale schema lifecycle task",
+                        "priority": "high",
+                        "effort": "low",
+                        "risk": "low",
+                        "task_type": "ops",
+                        "justification": {
+                            "summary": "Upgrade stale owner-local schema through stdio",
+                            "evidence_refs": ["artifact://stdio/stale-upgrade"],
+                            "expected_impact": "Allow lifecycle reconcile start without manual SQL",
+                        },
+                        "execution_context": {"project_id": self.project_id, "steps": ["upgrade", "claim"]},
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(start_payload["status"], "accepted")
+        self.assertEqual(start_payload["data"]["state"], "in_progress")
+        self.assertTrue(start_payload["data"]["created_task"])
+        user_version, columns = read_owner_local_schema_state(self.node_home / "node.sqlite3")
+        self.assertEqual(user_version, 1)
+        self.assertIn("lifecycle_key", columns)
+
+    def test_stdio_server_current_get_reports_schema_compatibility_error_for_unsupported_owner_local_drift(self) -> None:
+        write_incompatible_owner_local_schema(self.node_home / "node.sqlite3", user_version=99, include_project_id=True)
+
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        response = self._request(
+            2,
+            "tools/call",
+            {
+                "name": "current_get",
+                "arguments": {"as_of": "2026-06-19T13:45:00Z", "ready_limit": 1},
+            },
+        )
+
+        self.assertIn("result", response)
+        self.assertTrue(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "LOCAL_SCHEMA_COMPATIBILITY_ERROR")
+
+    def test_stdio_server_current_get_reports_schema_compatibility_error_for_unsafe_owner_local_drift(self) -> None:
+        write_incompatible_owner_local_schema(self.node_home / "node.sqlite3", user_version=0, include_project_id=False)
+
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        response = self._request(
+            2,
+            "tools/call",
+            {
+                "name": "current_get",
+                "arguments": {"as_of": "2026-06-19T13:45:00Z", "ready_limit": 1},
+            },
+        )
+
+        self.assertIn("result", response)
+        self.assertTrue(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "LOCAL_SCHEMA_COMPATIBILITY_ERROR")
 
     def test_installed_command_reports_mcp_help_surface(self) -> None:
         result = subprocess.run(
@@ -213,7 +800,7 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertIn("serve", result.stdout)
         self.assertIn("Start the local MCP stdio server", result.stdout)
 
-    def test_installed_command_root_help_lists_bootstrap_commands(self) -> None:
+    def test_installed_command_root_help_lists_tasks_claim(self) -> None:
         result = subprocess.run(
             [str(self.command_path), "--help"],
             check=False,
@@ -222,11 +809,132 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn("init", result.stdout)
-        self.assertIn("adopt", result.stdout)
-        self.assertIn("status", result.stdout)
-        self.assertIn("read", result.stdout)
-        self.assertIn("mcp", result.stdout)
+        self.assertIn("tasks", result.stdout)
+        self.assertIn("Read task queues, execution claims, and lifecycle", result.stdout)
+        self.assertIn("wrappers", result.stdout)
+        tasks_help = subprocess.run(
+            [str(self.command_path), "tasks", "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(tasks_help.returncode, 0)
+        self.assertIn("claim", tasks_help.stdout)
+        self.assertIn("start", tasks_help.stdout)
+        self.assertIn("finish", tasks_help.stdout)
+        self.assertIn("Reconcile owner-local same-project lifecycle work", tasks_help.stdout)
+        self.assertIn("Close owner-local adopted lifecycle work", tasks_help.stdout)
+
+    def test_installed_command_supports_tasks_claim_flow(self) -> None:
+        result = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "claim",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--task-id",
+                "tsk_ready",
+                "--plan",
+                "Implement the ready task",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "claimed")
+        self.assertEqual(payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(payload["data"]["task_id"], "tsk_ready")
+        self.assertEqual(payload["data"]["state"], "claimed")
+        self.assertEqual(payload["data"]["plan"], "Implement the ready task")
+
+    def test_installed_command_supports_tasks_finish_flow(self) -> None:
+        start_result = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://stdio/reuse",
+                "--plan",
+                "Resume lifecycle work",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(start_result.returncode, 0)
+
+        finish_result = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "finish",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://stdio/reuse",
+                "--outcome",
+                "done",
+                "--done-result",
+                "Lifecycle task completed",
+                "--done-artifacts",
+                "artifact://stdio/finish-done",
+                "--done-references",
+                "ref://stdio/finish-done",
+                "--done-expected-impact",
+                "Close the lifecycle task",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(finish_result.returncode, 0)
+        payload = json.loads(finish_result.stdout)
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["data"]["state"], "done")
+
+    def test_installed_command_supports_tasks_ready_flow(self) -> None:
+        result = subprocess.run(
+            [
+                str(self.command_path),
+                "tasks",
+                "ready",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--as-of",
+                "2026-06-19T13:45:00Z",
+                "--limit",
+                "1",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["adopted_project"]["project_id"], self.project_id)
+        self.assertEqual(payload["data"]["index_name"], "ready")
+        self.assertEqual(payload["data"]["as_of"], "2026-06-19T13:45:00Z")
+        self.assertEqual(payload["data"]["count"], 1)
+        self.assertEqual(payload["data"]["limit"], 1)
+        self.assertEqual(len(payload["data"]["tasks"]), 1)
 
     def test_installed_command_supports_bootstrap_flow(self) -> None:
         fresh_root = Path(self.tempdir.name) / "fresh-repo"

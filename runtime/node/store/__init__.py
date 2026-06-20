@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from pathlib import Path
+
+from runtime.shared.errors import SurfaceError
 
 UNSET = object()
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_NODE_SCHEMA_PATH = REPO_ROOT / "storage" / "node-schema.sql"
+OWNER_LOCAL_SCHEMA_VERSION = 1
+TASKS_LIFECYCLE_KEY_INDEX = "idx_tasks_project_lifecycle_key"
+TASKS_LIFECYCLE_KEY_INDEX_SQL = (
+    "CREATE UNIQUE INDEX idx_tasks_project_lifecycle_key "
+    "ON tasks(project_id, lifecycle_key) "
+    "WHERE lifecycle_key IS NOT NULL"
+)
 
 
 def _resolve_schema_path(schema_path: str | Path | None = None) -> Path:
@@ -20,10 +30,80 @@ def connect_node_store(db_path: str | Path, schema_path: str | Path | None = Non
     path.parent.mkdir(parents=True, exist_ok=True)
     initialize_schema = not path.exists() or path.stat().st_size == 0
     connection = sqlite3.connect(path)
-    connection.execute("PRAGMA foreign_keys = ON")
-    if initialize_schema:
-        connection.executescript(_resolve_schema_path(schema_path).read_text())
-    return connection
+    try:
+        connection.execute("PRAGMA foreign_keys = ON")
+        if initialize_schema:
+            connection.executescript(_resolve_schema_path(schema_path).read_text())
+        else:
+            _migrate_owner_local_schema(connection)
+        return connection
+    except Exception:
+        connection.close()
+        raise
+
+
+def _normalize_sql(sql: str | None) -> str:
+    return " ".join((sql or "").strip().lower().split())
+
+
+def _pragma_user_version(connection: sqlite3.Connection) -> int:
+    return int(connection.execute("PRAGMA user_version").fetchone()[0])
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> dict[str, dict]:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row[1]: {"cid": row[0], "type": row[2], "notnull": row[3], "default": row[4], "pk": row[5]} for row in rows}
+
+
+def _index_sql(connection: sqlite3.Connection, index_name: str) -> str | None:
+    row = connection.execute("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", (index_name,)).fetchone()
+    if not row:
+        return None
+    return row[0]
+
+
+def _raise_schema_compatibility_error(message: str) -> None:
+    raise SurfaceError("LOCAL_SCHEMA_COMPATIBILITY_ERROR", message)
+
+
+def _migrate_owner_local_schema(connection: sqlite3.Connection) -> None:
+    current_version = _pragma_user_version(connection)
+    if current_version > OWNER_LOCAL_SCHEMA_VERSION:
+        _raise_schema_compatibility_error(
+            f"owner-local node schema user_version {current_version} is newer than supported version {OWNER_LOCAL_SCHEMA_VERSION}"
+        )
+
+    tasks_columns = _table_columns(connection, "tasks")
+    if not tasks_columns:
+        _raise_schema_compatibility_error("owner-local node schema is missing the tasks table")
+    required_columns = {"task_id", "project_id"}
+    missing_required_columns = sorted(required_columns.difference(tasks_columns))
+    if missing_required_columns:
+        _raise_schema_compatibility_error(
+            f"owner-local tasks schema is unsupported; missing required columns: {', '.join(missing_required_columns)}"
+        )
+
+    expected_index_sql = _normalize_sql(TASKS_LIFECYCLE_KEY_INDEX_SQL)
+    existing_index_sql = _normalize_sql(_index_sql(connection, TASKS_LIFECYCLE_KEY_INDEX))
+    lifecycle_key_missing = "lifecycle_key" not in tasks_columns
+    index_needs_repair = existing_index_sql != expected_index_sql
+
+    if not lifecycle_key_missing and not index_needs_repair and current_version == OWNER_LOCAL_SCHEMA_VERSION:
+        return
+
+    try:
+        connection.execute("BEGIN")
+        if lifecycle_key_missing:
+            connection.execute("ALTER TABLE tasks ADD COLUMN lifecycle_key TEXT")
+        if index_needs_repair:
+            if existing_index_sql:
+                connection.execute(f"DROP INDEX {TASKS_LIFECYCLE_KEY_INDEX}")
+            connection.execute(TASKS_LIFECYCLE_KEY_INDEX_SQL)
+        connection.execute(f"PRAGMA user_version = {OWNER_LOCAL_SCHEMA_VERSION}")
+        connection.commit()
+    except sqlite3.DatabaseError as exc:
+        connection.rollback()
+        _raise_schema_compatibility_error(f"owner-local node schema upgrade failed: {exc}")
 
 
 class NodeStore:
@@ -45,6 +125,52 @@ class NodeStore:
     def close(self) -> None:
         self.db.close()
 
+    def ensure_local_claim_support(self) -> None:
+        self.db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS nodes (
+              node_id TEXT PRIMARY KEY,
+              display_name TEXT NOT NULL,
+              invitation_fingerprint TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL CHECK (status IN ('pending','active','revoked')),
+              last_seen_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS claim_leases (
+              claim_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              task_id TEXT NOT NULL,
+              node_id TEXT NOT NULL REFERENCES nodes(node_id),
+              agent_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              plan TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('active','renewed','released','expired')),
+              lease_started_at TEXT NOT NULL,
+              lease_expires_at TEXT NOT NULL
+            );
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_leases_one_active
+            ON claim_leases(project_id, task_id)
+            WHERE status IN ('active','renewed');
+
+            CREATE INDEX IF NOT EXISTS idx_claim_leases_lookup
+            ON claim_leases(project_id, task_id, status, lease_expires_at);
+            """
+        )
+
+    def ensure_local_node_actor(self, *, node_id: str, display_name: str = "Adopted local node") -> str:
+        self.ensure_local_claim_support()
+        row = self.db.execute("SELECT invitation_fingerprint FROM nodes WHERE node_id = ?", (node_id,)).fetchone()
+        if row:
+            self.db.execute("UPDATE nodes SET status = 'active', display_name = ? WHERE node_id = ?", (display_name, node_id))
+            return row["invitation_fingerprint"]
+        invitation_fingerprint = secrets.token_hex(16)
+        self.db.execute(
+            "INSERT INTO nodes (node_id, display_name, invitation_fingerprint, status, last_seen_at) VALUES (?,?,?,?,NULL)",
+            (node_id, display_name, invitation_fingerprint, "active"),
+        )
+        return invitation_fingerprint
+
     def create_workspace(self, workspace_id: str, canonical_link: str, name: str) -> None:
         self.db.execute("INSERT INTO workspaces VALUES (?,?,?)", (workspace_id, canonical_link, name))
 
@@ -57,9 +183,9 @@ class NodeStore:
     def create_audit(self, audit_id: str, project_id: str, state: str, title: str, content: str) -> None:
         self.db.execute("INSERT INTO audits VALUES (?,?,?,?,?,NULL)", (audit_id, project_id, state, title, content))
 
-    def create_task(self, task_id: str, project_id: str, origin_audit_id: str, state: str, priority: str, effort: str, risk: str, task_type: str, description: str, justification_json: str = "{}", execution_context_json: str = "{}", active_claim_session_id: str | None = None, blocked_reason: str | None = None, blocked_evidence: str | None = None, blocked_next_step: str | None = None, done_result: str | None = None, done_artifacts: str | None = None, done_references: str | None = None, done_expected_impact: str | None = None) -> None:
+    def create_task(self, task_id: str, project_id: str, origin_audit_id: str, state: str, priority: str, effort: str, risk: str, task_type: str, description: str, justification_json: str = "{}", execution_context_json: str = "{}", active_claim_session_id: str | None = None, lifecycle_key: str | None = None, blocked_reason: str | None = None, blocked_evidence: str | None = None, blocked_next_step: str | None = None, done_result: str | None = None, done_artifacts: str | None = None, done_references: str | None = None, done_expected_impact: str | None = None) -> None:
         self.db.execute(
-            "INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tasks (task_id, project_id, origin_audit_id, state, priority, effort, risk, type, description, justification_json, execution_context_json, active_claim_session_id, lifecycle_key, blocked_reason, blocked_evidence, blocked_next_step, done_result, done_artifacts, done_references, done_expected_impact) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 task_id,
                 project_id,
@@ -73,6 +199,7 @@ class NodeStore:
                 justification_json,
                 execution_context_json,
                 active_claim_session_id,
+                lifecycle_key,
                 blocked_reason,
                 blocked_evidence,
                 blocked_next_step,
@@ -82,6 +209,13 @@ class NodeStore:
                 done_expected_impact,
             ),
         )
+
+    def get_task_by_lifecycle_key(self, project_id: str, lifecycle_key: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM tasks WHERE project_id = ? AND lifecycle_key = ?",
+            (project_id, lifecycle_key),
+        ).fetchone()
+        return dict(row) if row else None
 
     def record_task_mutation(self, mutation_id: str, task_id: str, actor_node_id: str, actor_agent_id: str, actor_session_id: str, justification_json: str, authority_mode: str) -> None:
         self.db.execute(
@@ -98,6 +232,9 @@ class NodeStore:
     def get_cached_claim(self, task_id: str) -> dict | None:
         row = self.db.execute("SELECT * FROM claims_local_cache WHERE task_id = ?", (task_id,)).fetchone()
         return dict(row) if row else None
+
+    def clear_cached_claim(self, task_id: str) -> None:
+        self.db.execute("DELETE FROM claims_local_cache WHERE task_id = ?", (task_id,))
 
     def add_artifact_ref(self, artifact_ref_id: str, project_id: str, canonical_link: str, summary: str, task_id: str | None = None, audit_id: str | None = None) -> None:
         self.db.execute("INSERT INTO artifact_refs VALUES (?,?,?,?,?,?)", (artifact_ref_id, project_id, task_id, audit_id, canonical_link, summary))
@@ -121,6 +258,12 @@ class NodeStore:
     def get_workspace(self, workspace_id: str) -> dict | None:
         row = self.db.execute("SELECT * FROM workspaces WHERE workspace_id = ?", (workspace_id,)).fetchone()
         return dict(row) if row else None
+
+    def list_workspaces(self) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT workspace_id, canonical_link, name FROM workspaces ORDER BY workspace_id"
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def list_workspace_projects(self, workspace_id: str) -> list[dict]:
         rows = self.db.execute(
@@ -180,6 +323,28 @@ class NodeStore:
 
     def list_active_audits(self, project_id: str) -> list[dict]:
         rows = self.db.execute("SELECT audit_id, state, title FROM audits WHERE project_id = ? AND state IN ('draft','published') ORDER BY audit_id", (project_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_project_audits(self, project_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT audit_id, state, title, content FROM audits WHERE project_id = ? ORDER BY audit_id",
+            (project_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_project_tasks(self, project_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT task_id, description, state, priority, effort, risk, type FROM tasks WHERE project_id = ? "
+            "ORDER BY CASE priority WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, task_id",
+            (project_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_local_documents(self, project_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT document_id, storage_path FROM local_documents WHERE project_id = ? ORDER BY document_id",
+            (project_id,),
+        ).fetchall()
         return [dict(row) for row in rows]
 
     def list_tasks_for_index(self, project_id: str, index_name: str, as_of: str) -> list[dict]:
