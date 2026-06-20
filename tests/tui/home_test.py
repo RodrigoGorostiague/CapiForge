@@ -742,6 +742,61 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
             setattr(base, key, value)
         return base
 
+    def _mixed_state_snapshot(self) -> HomeSnapshot:
+        return self._sample_snapshot(
+            workspaces=(
+                WorkspaceSnapshot(
+                    workspace_id="ws_1",
+                    name="Workspace 1",
+                    projects=(
+                        ProjectSnapshot(
+                            project_id="prj_1",
+                            workspace_id="ws_1",
+                            name="Project 1",
+                            all_tasks=(
+                                ReadyTaskPreview(
+                                    task_id="tsk_ready",
+                                    description="Ready task",
+                                    state="ready",
+                                    priority="high",
+                                    effort="low",
+                                    risk="low",
+                                    task_type="fix",
+                                ),
+                                ReadyTaskPreview(
+                                    task_id="tsk_progress",
+                                    description="Active task",
+                                    state="in_progress",
+                                    priority="medium",
+                                    effort="low",
+                                    risk="low",
+                                    task_type="fix",
+                                ),
+                                ReadyTaskPreview(
+                                    task_id="tsk_blocked",
+                                    description="Blocked task",
+                                    state="blocked",
+                                    priority="low",
+                                    effort="low",
+                                    risk="low",
+                                    task_type="fix",
+                                ),
+                                ReadyTaskPreview(
+                                    task_id="tsk_done",
+                                    description="Done task",
+                                    state="done",
+                                    priority="low",
+                                    effort="low",
+                                    risk="low",
+                                    task_type="fix",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
     def test_on_mount_pushes_splash_before_loading_snapshot(self) -> None:
         app = HomeApp(repo_root="/tmp/demo", snapshot_loader=lambda **_kwargs: HomeSnapshot())
 
@@ -893,6 +948,50 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app._nav.task_filter, "active")
             active_pill = app.query_one(".filter-pill--active", FilterPill)
             self.assertIn("[2] Activas", str(active_pill.content))
+            self.assertIn("(2)", str(active_pill.content))
+            table = app.query_one("#tasks-table", DataTable)
+            self.assertEqual(table.row_count, 2)
+
+    async def test_task_filter_shows_matching_rows_only(self) -> None:
+        snapshot = self._mixed_state_snapshot()
+        app = HomeApp(repo_root="/tmp/demo", snapshot_loader=lambda **_kwargs: snapshot, show_startup_splash=False, theme="neon")
+
+        async with app.run_test() as pilot:
+            await pilot.press("t")
+            await pilot.pause()
+            table = app.query_one("#tasks-table", DataTable)
+            self.assertEqual(table.row_count, 4)
+            await pilot.press("3")
+            await pilot.pause()
+            self.assertEqual(app._nav.task_filter, "blocked")
+            self.assertEqual(table.row_count, 1)
+
+    async def test_empty_filter_shows_message(self) -> None:
+        snapshot = self._sample_snapshot()
+        app = HomeApp(repo_root="/tmp/demo", snapshot_loader=lambda **_kwargs: snapshot, show_startup_splash=False, theme="neon")
+
+        async with app.run_test() as pilot:
+            await pilot.press("t", "3")
+            await pilot.pause()
+            table = app.query_one("#tasks-table", DataTable)
+            self.assertEqual(table.row_count, 0)
+            empty = app.query_one("#tasks-empty", Static)
+            self.assertTrue(empty.has_class("visible"))
+            self.assertIn("Sin tareas en este filtro", str(empty.content))
+
+    async def test_filter_change_persists_state(self) -> None:
+        snapshot = self._sample_snapshot()
+        app = HomeApp(repo_root="/tmp/demo", snapshot_loader=lambda **_kwargs: snapshot, show_startup_splash=False, theme="neon")
+
+        async with app.run_test() as pilot:
+            await pilot.press("t", "4")
+            await pilot.pause()
+            with patch("runtime.tui.shell.persist_tui_state") as persist:
+                await pilot.press("3")
+                await pilot.pause()
+                persist.assert_called()
+                call_kwargs = persist.call_args.kwargs
+                self.assertEqual(call_kwargs["nav"].task_filter, "blocked")
 
     async def test_number_key_sets_task_filter(self) -> None:
         snapshot = self._sample_snapshot()
@@ -939,7 +1038,7 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Second task", content)
             self.assertIn("c para claim", content)
 
-    async def test_refresh_status_shows_auto_refresh_label(self) -> None:
+    async def test_sync_status_shows_light(self) -> None:
         snapshot = self._sample_snapshot()
         app = HomeApp(
             repo_root="/tmp/demo",
@@ -949,8 +1048,8 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
         )
 
         async with app.run_test() as _pilot:
-            status = app.query_one("#refresh-status", Static).content
-            self.assertIn("actualizado hace", status)
+            status = str(app.query_one("#refresh-status", Static).content)
+            self.assertIn("Sync OK", status)
             self.assertIn("auto 15s", status)
 
     async def test_toggle_auto_refresh_cycles_interval(self) -> None:
@@ -966,7 +1065,7 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
             await pilot.press("g")
             await pilot.pause()
             self.assertEqual(app._auto_refresh_seconds, 30)
-            status = app.query_one("#refresh-status", Static).content
+            status = str(app.query_one("#refresh-status", Static).content)
             self.assertIn("auto 30s", status)
 
     async def test_nav_down_selects_tasks_in_tasks_view(self) -> None:
@@ -1266,12 +1365,67 @@ class ThemeTest(unittest.TestCase):
         self.assertEqual(style_for_task_state("in_progress"), "bold blue")
 
     def test_build_task_filters_bar_marks_active_filter(self) -> None:
+        from runtime.tui.data import TaskPreview
         from runtime.tui.view import build_task_filters_bar
 
-        bar = build_task_filters_bar("blocked")
+        tasks = (
+            TaskPreview("tsk_1", "Alpha", "ready", "low", "low", "low", "fix"),
+            TaskPreview("tsk_2", "Beta", "blocked", "low", "low", "low", "fix"),
+        )
+        bar = build_task_filters_bar("blocked", tasks=tasks)
         rendered = str(bar)
         self.assertIn("[3] Bloqueadas", rendered)
+        self.assertIn("(1)", rendered)
         self.assertIn("[1] Todas", rendered)
+        self.assertIn("(2)", rendered)
+
+    def test_count_tasks_by_filter(self) -> None:
+        from runtime.tui.data import TaskPreview, count_tasks_by_filter
+
+        tasks = (
+            TaskPreview("tsk_1", "Alpha", "ready", "low", "low", "low", "fix"),
+            TaskPreview("tsk_2", "Beta", "done", "low", "low", "low", "fix"),
+            TaskPreview("tsk_3", "Gamma", "blocked", "low", "low", "low", "fix"),
+        )
+        counts = count_tasks_by_filter(tasks)
+        self.assertEqual(counts["all"], 3)
+        self.assertEqual(counts["active"], 1)
+        self.assertEqual(counts["done"], 1)
+        self.assertEqual(counts["blocked"], 1)
+
+    def test_resolve_sync_light_state(self) -> None:
+        from runtime.tui.view import resolve_sync_light_state
+
+        self.assertEqual(
+            resolve_sync_light_state(
+                degraded=False,
+                pending_routes=0,
+                seconds_since_refresh=5,
+                auto_refresh_seconds=15,
+                refreshing=False,
+            ),
+            "ok",
+        )
+        self.assertEqual(
+            resolve_sync_light_state(
+                degraded=True,
+                pending_routes=0,
+                seconds_since_refresh=5,
+                auto_refresh_seconds=15,
+                refreshing=False,
+            ),
+            "degraded",
+        )
+        self.assertEqual(
+            resolve_sync_light_state(
+                degraded=False,
+                pending_routes=2,
+                seconds_since_refresh=5,
+                auto_refresh_seconds=15,
+                refreshing=False,
+            ),
+            "pending",
+        )
 
     def test_sort_tasks_for_view_orders_by_priority(self) -> None:
         from runtime.tui.data import TaskPreview

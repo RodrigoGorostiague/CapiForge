@@ -13,6 +13,7 @@ from runtime.tui.data import (
     TaskPreview,
     WorkspaceSnapshot,
     default_nav_state,
+    count_tasks_by_filter,
     filter_tasks,
     resolve_as_of,
     resolve_nav_selection,
@@ -248,14 +249,91 @@ def _resolve_selected_task(tasks: tuple[TaskPreview, ...], selected_task_id: str
     return tasks[0]
 
 
-def build_task_filters_bar(task_filter: str) -> Text:
+def build_filter_pill_label(filter_id: str, label: str, shortcut: str, *, count: int, active: bool) -> Text:
+    pill_label = f"[{shortcut}] {label} ({count})"
+    style = style_for_selected_row() if active else "dim"
+    return render_pill(pill_label, style)
+
+
+def build_task_filters_bar(task_filter: str, *, tasks: tuple[TaskPreview, ...] = ()) -> Text:
+    counts = count_tasks_by_filter(tasks)
     text = Text()
     for index, (filter_id, label, shortcut) in enumerate(TASK_FILTER_OPTIONS):
         if index:
             text.append("  ")
-        pill_label = f"[{shortcut}] {label}"
-        style = style_for_selected_row() if filter_id == task_filter else "dim"
-        text.append_text(render_pill(pill_label, style))
+        text.append_text(
+            build_filter_pill_label(
+                filter_id,
+                label,
+                shortcut,
+                count=counts.get(filter_id, 0),
+                active=filter_id == task_filter,
+            )
+        )
+    return text
+
+
+SyncLightState = Literal["ok", "degraded", "pending", "stale", "refreshing"]
+
+SYNC_LIGHT_STYLES: dict[SyncLightState, tuple[str, str]] = {
+    "ok": ("●", "bright_green"),
+    "degraded": ("●", "bright_yellow"),
+    "pending": ("●", "bright_yellow"),
+    "stale": ("●", "bright_red"),
+    "refreshing": ("◐", "bright_cyan"),
+}
+
+SYNC_LIGHT_LABELS: dict[SyncLightState, str] = {
+    "ok": "Sync OK",
+    "degraded": "Local-only",
+    "pending": "Rutas pendientes",
+    "stale": "Datos desactualizados",
+    "refreshing": "Actualizando",
+}
+
+
+def resolve_sync_light_state(
+    *,
+    degraded: bool,
+    pending_routes: int,
+    seconds_since_refresh: int,
+    auto_refresh_seconds: int,
+    refreshing: bool,
+) -> SyncLightState:
+    if refreshing:
+        return "refreshing"
+    if pending_routes > 0:
+        return "pending"
+    if degraded:
+        return "degraded"
+    if auto_refresh_seconds > 0 and seconds_since_refresh > auto_refresh_seconds:
+        return "stale"
+    return "ok"
+
+
+def build_sync_status_light(
+    *,
+    degraded: bool = False,
+    pending_routes: int = 0,
+    seconds_since_refresh: int = 0,
+    auto_refresh_seconds: int = 0,
+    refreshing: bool = False,
+) -> Text:
+    state = resolve_sync_light_state(
+        degraded=degraded,
+        pending_routes=pending_routes,
+        seconds_since_refresh=seconds_since_refresh,
+        auto_refresh_seconds=auto_refresh_seconds,
+        refreshing=refreshing,
+    )
+    glyph, color = SYNC_LIGHT_STYLES[state]
+    text = Text()
+    text.append(glyph, style=color)
+    text.append(f" {SYNC_LIGHT_LABELS[state]}", style="dim")
+    if auto_refresh_seconds:
+        text.append(f" · auto {auto_refresh_seconds}s", style="dim")
+    elif state != "refreshing":
+        text.append(" · auto off", style="dim")
     return text
 
 
@@ -465,7 +543,12 @@ def build_tasks_content(
         return ContentViewModel(header=header, body="Selecciona un proyecto.", footer_hints="q Salir  ·  r Refrescar")
 
     tasks = tuple(filter_tasks(project.all_tasks, nav.task_filter))
-    tasks_meta = f"{len(tasks)} tareas"
+    counts = count_tasks_by_filter(project.all_tasks)
+    if tasks:
+        tasks_meta = f"{len(tasks)} tareas"
+    else:
+        filter_label = next((label for fid, label, _ in TASK_FILTER_OPTIONS if fid == nav.task_filter), nav.task_filter)
+        tasks_meta = f"0 tareas · sin resultados en «{filter_label}» ({counts.get(nav.task_filter, 0)})"
     selected_task = _resolve_selected_task(tasks, nav.selected_task_id)
     drawer = (
         build_task_drawer(selected_task, audits=project.audits, content_width=content_width)

@@ -68,6 +68,8 @@ class ProjectSnapshot:
     audits: tuple[AuditPreview, ...] = ()
     local_documents: tuple[LocalDocumentPreview, ...] = ()
     sync_summary: str | None = None
+    sync_degraded: bool = False
+    sync_pending_routes: int = 0
     notices: tuple[str, ...] = ()
 
 
@@ -96,6 +98,8 @@ class AppSnapshot:
     queue_counts: dict[str, int] = field(default_factory=dict)
     ready_tasks: tuple[TaskPreview, ...] = ()
     sync_summary: str | None = None
+    sync_degraded: bool = False
+    sync_pending_routes: int = 0
     notices: tuple[str, ...] = ()
     workspaces: tuple[WorkspaceSnapshot, ...] = ()
 
@@ -229,6 +233,8 @@ def load_home_snapshot(*, repo_root: str | Path, node_home: str | Path | None = 
                 sync_data = sync_response["data"]
                 authority = sync_data.get("canonical_write_path", "unknown")
                 pending_routes = sync_data.get("pending_routes", 0)
+                snapshot.sync_degraded = bool(sync_data.get("degraded"))
+                snapshot.sync_pending_routes = int(pending_routes)
                 if sync_data.get("degraded"):
                     snapshot.sync_summary = f"Local-only visibility · {pending_routes} pending routes · authority {authority}"
                 else:
@@ -375,10 +381,14 @@ def load_project_snapshot(
     )
 
     sync_summary: str | None = None
+    sync_degraded = False
+    sync_pending_routes = 0
     try:
         sync_data = surface.sync_status(project_id=project["project_id"], actor=actor)["data"]
         authority = sync_data.get("canonical_write_path", "unknown")
         pending_routes = sync_data.get("pending_routes", 0)
+        sync_degraded = bool(sync_data.get("degraded"))
+        sync_pending_routes = int(pending_routes)
         if sync_data.get("degraded"):
             sync_summary = f"Local-only visibility · {pending_routes} pending routes · authority {authority}"
         else:
@@ -398,6 +408,8 @@ def load_project_snapshot(
         audits=audits,
         local_documents=local_documents,
         sync_summary=sync_summary,
+        sync_degraded=sync_degraded,
+        sync_pending_routes=sync_pending_routes,
         notices=tuple(notices),
     )
 
@@ -442,6 +454,15 @@ def filter_tasks(tasks: tuple[TaskPreview, ...], task_filter: str) -> tuple[Task
     if task_filter == "done":
         return tuple(task for task in tasks if task.state == "done")
     return tasks
+
+
+def count_tasks_by_filter(tasks: tuple[TaskPreview, ...]) -> dict[str, int]:
+    return {
+        "all": len(tasks),
+        "active": len(filter_tasks(tasks, "active")),
+        "blocked": len(filter_tasks(tasks, "blocked")),
+        "done": len(filter_tasks(tasks, "done")),
+    }
 
 
 def default_nav_state(snapshot: AppSnapshot, previous: NavState | None = None) -> NavState:

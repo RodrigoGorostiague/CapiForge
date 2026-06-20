@@ -131,6 +131,18 @@ Screen {{
     width: 100%;
 }}
 
+#tasks-empty {{
+    display: none;
+    color: {palette.muted};
+    width: 100%;
+    padding: 1 0;
+    text-align: center;
+}}
+
+#tasks-empty.visible {{
+    display: block;
+}}
+
 #refresh-status {{
     color: {palette.muted};
     width: auto;

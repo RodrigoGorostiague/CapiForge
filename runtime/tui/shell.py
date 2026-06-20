@@ -37,6 +37,7 @@ from runtime.tui.data import (
     NavState,
     ProjectSnapshot,
     default_nav_state,
+    count_tasks_by_filter,
     filter_tasks,
     load_home_snapshot,
     load_persisted_tui_state,
@@ -69,10 +70,11 @@ from runtime.tui.view import (
     TASK_SORTABLE_COLUMNS,
     TASK_TABLE_COLUMNS,
     build_audit_task_row_label,
+    build_filter_pill_label,
     build_content_view_model,
     build_docs_detail_content,
     build_footer_hints,
-    build_refresh_status,
+    build_sync_status_light,
     build_task_column_label,
     build_task_table_row,
     compute_docs_detail_height,
@@ -252,6 +254,7 @@ class ShellApp(App[None]):
         self._startup_snapshot_ready = False
         self._startup_splash_dismiss_requested = False
         self._startup_splash: StartupSplash | None = None
+        self._sync_refreshing = False
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="layout"):
@@ -271,6 +274,7 @@ class ShellApp(App[None]):
                     yield Static("─" * 48, id="header-rule")
                 yield Horizontal(id="task-filters", classes="hidden")
                 yield DataTable(id="tasks-table", cursor_type="row", zebra_stripes=True)
+                yield Static("", id="tasks-empty")
                 with Vertical(id="docs-shell", classes="hidden"):
                     yield Static(id="docs-index-label")
                     yield Container(id="docs-list")
@@ -608,6 +612,7 @@ class ShellApp(App[None]):
             expanded_projects=self._nav.expanded_projects,
         )
         self._drawer_open = False
+        self._persist_state()
         self._render_all()
 
     def _schedule_startup_snapshot(self, delay_seconds: float, callback: Callable[[], None]) -> object:
@@ -1076,6 +1081,8 @@ class ShellApp(App[None]):
 
     def _reload_snapshot(self, *, select_latest_workspace: bool = False, quiet: bool = False) -> None:
         previous_nav = self._nav
+        self._sync_refreshing = True
+        self._render_sync_status()
         try:
             snapshot = self._snapshot_loader(repo_root=self._repo_root, node_home=self._node_home, as_of=self._as_of)
         except Exception:
@@ -1087,6 +1094,8 @@ class ShellApp(App[None]):
                 snapshot = AppSnapshot(bootstrap_state="unavailable")
                 if not quiet:
                     self._show_status("Refresh failed.", error=True)
+        finally:
+            self._sync_refreshing = False
         self._current_snapshot = snapshot
         self._refreshed_at = time.monotonic()
         self._nav = default_nav_state(snapshot, previous_nav)
@@ -1145,11 +1154,12 @@ class ShellApp(App[None]):
         view_model = build_content_view_model(snapshot, self._nav, content_width=content_width)
         self.query_one("#breadcrumb", Static).update(view_model.header.breadcrumb)
         self.query_one("#page-title", Static).update(view_model.header.title)
-        self._render_refresh_status()
+        self._render_sync_status()
 
         task_meta = self.query_one("#task-meta", Static)
         task_filters = self.query_one("#task-filters", Horizontal)
         tasks_table = self.query_one("#tasks-table", DataTable)
+        tasks_empty = self.query_one("#tasks-empty", Static)
         content_main = self.query_one("#content-main", Static)
         content_body = self.query_one("#content-body", VerticalScroll)
         docs_shell = self.query_one("#docs-shell", Vertical)
@@ -1160,7 +1170,9 @@ class ShellApp(App[None]):
             task_meta.update(f"· {view_model.tasks_meta}")
             task_meta.add_class("visible")
             header_rule.add_class("hidden")
-            self._render_task_filters(task_filters, self._nav.task_filter)
+            _workspace, project = resolve_nav_selection(snapshot, self._nav)
+            all_tasks = project.all_tasks if project is not None else ()
+            self._render_task_filters(task_filters, self._nav.task_filter, all_tasks)
             task_filters.remove_class("hidden")
             tasks_table.add_class("visible")
             content_body.add_class("hidden")
@@ -1168,6 +1180,12 @@ class ShellApp(App[None]):
             docs_list.remove_children()
             content_main.update("")
             self._populate_tasks_table(tasks_table, view_model.tasks)
+            if view_model.tasks:
+                tasks_empty.update("")
+                tasks_empty.remove_class("visible")
+            else:
+                tasks_empty.update("Sin tareas en este filtro. Prueba otro filtro (1–4) o pulsa f para rotar.")
+                tasks_empty.add_class("visible")
         elif self._nav.view == "project_docs":
             task_meta.update("")
             task_meta.remove_class("visible")
@@ -1175,6 +1193,7 @@ class ShellApp(App[None]):
             task_filters.remove_children()
             task_filters.add_class("hidden")
             tasks_table.remove_class("visible")
+            tasks_empty.remove_class("visible")
             content_body.add_class("hidden")
             content_main.update("")
             docs_shell.add_class("visible")
@@ -1186,6 +1205,7 @@ class ShellApp(App[None]):
             task_filters.remove_children()
             task_filters.add_class("hidden")
             tasks_table.remove_class("visible")
+            tasks_empty.remove_class("visible")
             content_body.remove_class("hidden")
             docs_shell.remove_class("visible")
             docs_list.remove_children()
@@ -1209,17 +1229,29 @@ class ShellApp(App[None]):
         if self._focus_panel == "content" and view_model.tasks is not None and tasks_table.has_class("visible"):
             tasks_table.focus()
 
-    def _render_task_filters(self, container: Horizontal, active_filter: str) -> None:
+    def _render_task_filters(
+        self,
+        container: Horizontal,
+        active_filter: str,
+        all_tasks: tuple,
+    ) -> None:
+        counts = count_tasks_by_filter(all_tasks)
         pills = list(container.query(FilterPill))
         if not pills:
             for index, (filter_id, label, shortcut) in enumerate(TASK_FILTER_OPTIONS):
-                pill_label = f"[{shortcut}] {label}"
+                pill_content = build_filter_pill_label(
+                    filter_id,
+                    label,
+                    shortcut,
+                    count=counts.get(filter_id, 0),
+                    active=filter_id == active_filter,
+                )
                 classes = ["filter-pill", "clickable"]
                 if filter_id == active_filter:
                     classes.append("filter-pill--active")
                 container.mount(
                     FilterPill(
-                        pill_label,
+                        pill_content,
                         filter_id=filter_id,
                         classes=" ".join(classes),
                         id=f"filter-{filter_id}",
@@ -1230,6 +1262,19 @@ class ShellApp(App[None]):
             return
         for pill in pills:
             pill.set_class(pill.filter_id == active_filter, "filter-pill--active")
+            option = next((item for item in TASK_FILTER_OPTIONS if item[0] == pill.filter_id), None)
+            if option is None:
+                continue
+            filter_id, label, shortcut = option
+            pill.update(
+                build_filter_pill_label(
+                    filter_id,
+                    label,
+                    shortcut,
+                    count=counts.get(filter_id, 0),
+                    active=pill.filter_id == active_filter,
+                )
+            )
 
     def _render_docs_view(self) -> None:
         snapshot = self._current_snapshot
@@ -1407,20 +1452,42 @@ class ShellApp(App[None]):
                     expanded_projects=self._nav.expanded_projects,
                 )
             self._update_task_drawer()
+        else:
+            self._drawer_open = False
+            drawer = self.query_one("#task-drawer", Static)
+            drawer.update("")
+            drawer.remove_class("visible")
 
-    def _render_refresh_status(self) -> None:
+    def _render_sync_status(self) -> None:
         if not self.is_mounted:
             return
         try:
             status_widget = self.query_one("#refresh-status", Static)
         except Exception:
             return
+        degraded = False
+        pending_routes = 0
+        snapshot = self._current_snapshot
+        if snapshot is not None:
+            _workspace, project = resolve_nav_selection(snapshot, self._nav)
+            if project is not None:
+                degraded = project.sync_degraded
+                pending_routes = project.sync_pending_routes
+            else:
+                degraded = snapshot.sync_degraded
+                pending_routes = snapshot.sync_pending_routes
         seconds_since_refresh = max(0, int(time.monotonic() - self._refreshed_at))
-        status = build_refresh_status(
+        status = build_sync_status_light(
+            degraded=degraded,
+            pending_routes=pending_routes,
             seconds_since_refresh=seconds_since_refresh,
             auto_refresh_seconds=self._auto_refresh_seconds,
+            refreshing=self._sync_refreshing,
         )
         status_widget.update(status)
+
+    def _render_refresh_status(self) -> None:
+        self._render_sync_status()
 
     def _update_footer(self, _hints: str) -> None:
         palette = active_theme()
