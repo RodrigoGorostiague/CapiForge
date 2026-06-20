@@ -1,0 +1,42 @@
+name: deb-build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            devscripts \
+            debhelper \
+            dh-python \
+            pybuild-plugin-pyproject \
+            python3-all \
+            python3-setuptools \
+            python3-textual \
+            lintian
+
+      - name: Build Debian package
+        run: ./scripts/build-deb.sh
+
+      - name: Lintian
+        run: |
+          CHANGES="$(ls -1t ../capiforge_*_all.changes | head -1)"
+          lintian "${CHANGES}" || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: capiforge-deb
+          path: |
+            ../capiforge_*.deb
+            ../capiforge_*_all.changes
