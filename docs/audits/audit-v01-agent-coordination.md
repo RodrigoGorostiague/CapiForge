@@ -38,7 +38,18 @@ Session ID fijo y lease 5 min sin renovación MCP. Viable para un agente; frági
 
 ## Criterios de éxito del objetivo
 
-- [ ] `./capinstall` deja skills + MCP listos sin configuración manual
-- [ ] Un agente puede iniciar y cerrar una tarea (queue o lifecycle) solo vía MCP
-- [ ] Skills documentan qué actualizar en BBDD al comenzar y finalizar
-- [ ] Auditoría publicada con tareas `ready` vinculadas por `lifecycle_key`
+- [x] `./capinstall` deja skills + MCP listos sin configuración manual
+- [x] Un agente puede iniciar y cerrar una tarea (queue o lifecycle) solo vía MCP
+- [x] Skills documentan qué actualizar en BBDD al comenzar y finalizar
+- [x] Auditoría publicada con tareas `ready` vinculadas por `lifecycle_key`
+
+## Estado de remediación (2026-06-20)
+
+| Hallazgo | Estado | Evidencia |
+|----------|--------|-----------|
+| H2 — Instalación sin skills | **Cerrado** | `capinstall` instala 5 skills Cursor en `.cursor/skills/` y el artefacto OpenCode `capiforge-record-completed-work`; verify cubre ambos (`runtime/installer/integration_config.py`, `tests/install/setup_test.py`) |
+| H3 — MCP sin transition | **Cerrado** | `tasks_transition`, `tasks_release` y `tasks_claim_renew` expuestos en MCP stdio (`runtime/node/mcp_stdio.py`, `tests/mcp_cli/surface_test.py`) |
+| H5 — Sin contrato de datos | **Cerrado** | Skill `capiforge-data-layer` documenta esquema, estados y flujos start/finish |
+| H6 — Sesión fija sin renew | **Cerrado** | `resolve_mcp_actor_context()` deriva sesión por cliente; `tasks_claim_renew` expuesto (`tests/node/mcp_actor_context_test.py`) |
+
+Tareas derivadas: todas cerradas en CapiForge. Onboarding en `docs/architecture-v01.md` y `AGENTS.md`.
