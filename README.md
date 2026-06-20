@@ -28,15 +28,62 @@ V1 keeps the coordinator thin and non-authoritative. Each project has exactly on
 
 ### Install the canonical `capiforge` command
 
-The official install path for the MCP command is an editable Python install from the repo root:
+Recommended Linux developer install from the repo root:
 
 ```bash
-python3 -m pip install -e .
-capiforge mcp --help
-capiforge mcp serve --help
+./capinstall
 ```
 
-This installs the public console script `capiforge` backed by `runtime.cli:main`.
+In an interactive terminal, `./capinstall` opens a **Textual wizard** with:
+
+- **Install** — choose Cursor and/or OpenCode, then install + bootstrap + MCP config
+- **Update** — refresh the installed binary and all registered integrations
+- **Uninstall** — remove the binary, MCP entries, and installer state
+- **Verify** — health check without changes
+
+CLI/automation mode:
+
+```bash
+./capinstall install --cursor --opencode --non-interactive
+./capinstall update --non-interactive
+./capinstall uninstall --non-interactive
+./capinstall verify --json
+./capinstall --no-tui-ui verify
+```
+
+The installer verifies Python 3.11+, installs dependencies in an isolated tool environment (preferring `uv`, with `pipx` as a fallback), bootstraps the repo (`init` → `adopt`), and writes MCP integration config for the targets you select.
+
+Integration paths:
+
+- **Cursor:** `~/.cursor/mcp.json` and `<repo>/.cursor/mcp.json`
+- **OpenCode:** `~/.config/opencode/opencode.json`
+
+Installer state is stored in `~/.capiforge/installer-state.json` so update/uninstall can refresh or remove everything that was registered.
+
+After pulling new changes:
+
+```bash
+./capinstall update
+```
+
+If `uv` is missing, bootstrap it explicitly:
+
+```bash
+CAPIFORGE_INSTALL_UV=1 ./capinstall install --cursor --non-interactive
+```
+
+Manual editable install remains supported:
+
+```bash
+python3 -m pip install -e ".[tui]"
+capiforge mcp --help
+```
+
+Example MCP stdio configuration:
+
+```bash
+capiforge mcp serve --repo-root /path/to/repo --node-home /path/to/repo/.capiforge/node
+```
 
 ### Bootstrap commands
 
@@ -46,12 +93,18 @@ The canonical public operator path is now the installed `capiforge` command. The
 2. Explicitly adopt this repository as the owner-local project.
 3. Inspect persisted status.
 4. Read deterministic project data for the adopted repository.
+5. Read the aggregated current adopted-project summary.
+6. Read the ready task queue for the adopted project.
+7. Claim a ready task for local execution.
 
 ```bash
 capiforge init
 capiforge adopt
 capiforge status
 capiforge read --as-of 2026-06-19T13:30:00Z
+capiforge current
+capiforge tasks ready
+capiforge tasks claim --task-id tsk_123 --plan "Implement the requested change"
 ```
 
 The legacy bootstrap helper remains available as a compatibility shim:
@@ -76,6 +129,24 @@ Example `read` response:
 {"status":"ok","data":{"bootstrap_state":"adopted","project":{"repo_root":"/repo","project_id":"project:..."},"entrypoint":{"project_id":"project:...","generated_at":"2026-06-19T13:30:00Z"}},"error":null}
 ```
 
+Example `current` response:
+
+```json
+{"status":"ok","data":{"bootstrap_state":"adopted","adopted_project":{"repo_root":"/repo","project_id":"project:..."},"as_of":"2026-06-19T13:30:00Z","entrypoint":{"project_id":"project:...","generated_at":"2026-06-19T13:30:00Z"},"sync_status":{"project_id":"project:...","degraded":true,"canonical_write_path":"owner_node_local"},"ready_tasks":{"project_id":"project:...","index_name":"ready","limit":10,"tasks":[]}},"error":null}
+```
+
+Example `tasks ready` response:
+
+```json
+{"status":"ok","data":{"bootstrap_state":"adopted","adopted_project":{"repo_root":"/repo","project_id":"project:..."},"index_name":"ready","as_of":"2026-06-19T13:30:00Z","count":0,"limit":20,"tasks":[]},"error":null}
+```
+
+Example `tasks claim` response:
+
+```json
+{"status":"claimed","data":{"bootstrap_state":"adopted","adopted_project":{"repo_root":"/repo","project_id":"project:..."},"claim_id":"clm_...","task_id":"tsk_123","lease_started_at":"2026-06-19T13:30:00Z","lease_expires_at":"2026-06-19T13:35:00Z","state":"claimed","plan":"Implement the requested change"},"error":null}
+```
+
 The owner-local node home layout is:
 
 - `.capiforge/node/bootstrap.json` — persisted bootstrap state (`uninitialized`, `initialized`, `adopted`)
@@ -95,6 +166,10 @@ For local MCP stdio usage after installation:
 capiforge mcp --help
 capiforge mcp serve --repo-root /path/to/repo --node-home /path/to/repo/.capiforge/node
 ```
+
+The stdio MCP surface also exposes `current_get`, which returns the same aggregate payload shape as `capiforge current` with optional `as_of` and `ready_limit` inputs.
+It also exposes `tasks_ready_get`, which returns the same payload shape as `capiforge tasks ready` with optional `as_of` and `limit` inputs.
+It also exposes `tasks_claim`, which returns the same payload shape as `capiforge tasks claim` with required `task_id` and `plan`, plus optional `lease_minutes`.
 
 Project-scoped authorization is now enforced before local entrypoint reads, indexed task reads, claims, and routed mutation proposal creation. Enrollment alone is not enough to inspect or act on arbitrary project IDs.
 

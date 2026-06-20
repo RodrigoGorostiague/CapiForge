@@ -334,7 +334,9 @@ class NodeStore:
 
     def list_project_tasks(self, project_id: str) -> list[dict]:
         rows = self.db.execute(
-            "SELECT task_id, description, state, priority, effort, risk, type FROM tasks WHERE project_id = ? "
+            "SELECT task_id, description, state, priority, effort, risk, type, origin_audit_id, "
+            "lifecycle_key, blocked_reason, blocked_next_step "
+            "FROM tasks WHERE project_id = ? "
             "ORDER BY CASE priority WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, task_id",
             (project_id,),
         ).fetchall()

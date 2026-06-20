@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from typing import Sequence
 
 from runtime import bootstrap_cli
 from runtime.node import mcp_stdio
+
 BOOTSTRAP_COMMANDS = {"init", "adopt", "status", "read", "current"}
 MCP_COMMANDS = {"serve"}
 
 
+def _package_version() -> str:
+    try:
+        return version("capiforge")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="capiforge")
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {_package_version()}")
     subparsers = parser.add_subparsers(dest="command")
 
     mcp_parser = subparsers.add_parser("mcp", help="Run MCP surfaces")
@@ -64,12 +74,37 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Read bootstrap status as a JSON envelope")
     subparsers.add_parser("read", help="Read deterministic project data as a JSON envelope")
     subparsers.add_parser("current", help="Read the adopted project summary as a JSON envelope")
+    tui_parser = subparsers.add_parser("tui", help="Open the CapiForge terminal UI")
+    tui_parser.add_argument("--repo-root")
+    tui_parser.add_argument("--node-home")
+    tui_parser.add_argument("--as-of")
+    tui_parser.add_argument("--theme", choices=("neon", "notion", "light"))
+    tui_parser.add_argument("--auto-refresh", type=int, choices=(0, 15, 30, 60))
 
     return parser
 
 
+def _handle_tui(argv: Sequence[str]) -> int:
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("The TUI requires an interactive terminal.", file=sys.stderr)
+        return 1
+    try:
+        from runtime.tui.shell import main as tui_main
+    except ImportError:
+        print(
+            "TUI dependencies are missing. Reinstall with the optional [tui] extra:\n"
+            "  uv tool install --reinstall --editable '.[tui]' --directory <repo>\n"
+            "  or: pip install -e '.[tui]'",
+            file=sys.stderr,
+        )
+        return 1
+    return tui_main(argv, prog="capiforge tui")
+
+
 def _handle_mcp_serve(argv: Sequence[str]) -> int:
     return mcp_stdio.main(list(argv), prog="capiforge mcp serve")
+
+
 def _handle_tasks(argv: Sequence[str]) -> int:
     if len(argv) >= 2 and argv[0] == "tasks" and argv[1] == "ready":
         return bootstrap_cli.main(["tasks-ready", *argv[2:]], prog="capiforge")
@@ -93,10 +128,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _handle_mcp_serve(raw_argv[2:])
     if raw_argv and raw_argv[0] == "tasks":
         return _handle_tasks(raw_argv)
+    if raw_argv and raw_argv[0] == "tui":
+        if "-h" in raw_argv[1:] or "--help" in raw_argv[1:]:
+            _build_parser().parse_args(raw_argv)
+            return 0
+        return _handle_tui(raw_argv[1:])
 
     parser = _build_parser()
     args = parser.parse_args(raw_argv)
     if args.command == "mcp":
         parser.parse_args(["mcp", "--help"])
+    if args.command == "tui":
+        return _handle_tui(raw_argv[1:])
     parser.print_help()
     return 1
