@@ -7,8 +7,9 @@ from pathlib import Path
 from runtime.shared.errors import SurfaceError
 
 UNSET = object()
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_NODE_SCHEMA_PATH = REPO_ROOT / "storage" / "node-schema.sql"
+from runtime.paths import asset_path, schema_path
+
+DEFAULT_NODE_SCHEMA_PATH = schema_path("node-schema.sql")
 OWNER_LOCAL_SCHEMA_VERSION = 1
 TASKS_LIFECYCLE_KEY_INDEX = "idx_tasks_project_lifecycle_key"
 TASKS_LIFECYCLE_KEY_INDEX_SQL = (
@@ -291,6 +292,13 @@ class NodeStore:
         row = self.db.execute("SELECT * FROM audits WHERE audit_id = ?", (audit_id,)).fetchone()
         return dict(row) if row else None
 
+    def get_audit_for_project(self, project_id: str, audit_id: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM audits WHERE project_id = ? AND audit_id = ?",
+            (project_id, audit_id),
+        ).fetchone()
+        return dict(row) if row else None
+
     def owner_node_id(self, project_id: str) -> str:
         row = self.get_project(project_id)
         if not row:
@@ -451,3 +459,6 @@ class NodeStore:
 
     def update_audit_content(self, audit_id: str, content: str) -> None:
         self.db.execute("UPDATE audits SET content = ? WHERE audit_id = ?", (content, audit_id))
+
+    def update_audit_state(self, audit_id: str, state: str) -> None:
+        self.db.execute("UPDATE audits SET state = ? WHERE audit_id = ?", (state, audit_id))

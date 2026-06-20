@@ -1,0 +1,27 @@
+Source: capiforge
+Section: python
+Priority: optional
+Maintainer: CapiForge Maintainers <maintainers@capiforge.dev>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-setuptools,
+               python3-textual,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/capiforge/capiforge
+Vcs-Browser: https://github.com/capiforge/capiforge
+Vcs-Git: https://github.com/capiforge/capiforge.git
+
+Package: capiforge
+Architecture: all
+Depends: ${python3:Depends},
+         ${misc:Depends},
+         python3 (>= 3.11),
+         python3-textual,
+Description: local-first task and audit runtime for AI agents
+ CapiForge provides an owner-local node runtime, MCP server, Textual TUI,
+ and capinstall integration wizard. Share data (schemas, skills, assets)
+ installs under /usr/share/capiforge for system-wide use while project state
+ remains in each adopted repository.

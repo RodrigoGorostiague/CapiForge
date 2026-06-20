@@ -19,8 +19,10 @@ Use when a CapiForge task was already picked up and started, implementation is f
 - Prefer higher-level product-facing reads first: `current_get` when available; otherwise use `workspace_get_current`, `project_entrypoint_get`, `tasks_list_by_index`, and `sync_status`.
 - Resolve the target task only from explicit caller input or prior claimed/in-progress context. If neither exists, stop and recommend `capiforge-pickup-task` or `capiforge-start-task`.
 - Never close a task without validating project, task, claim, and lease context first.
-- Default the terminal state to `done` unless explicit repo workflow for this task requires another terminal state.
-- Treat `tasks.transition` / `tasks_transition` as the final authority when no higher-level close wrapper exists.
+- Default the terminal state to `done` unless explicit repo workflow for this task requires `blocked`.
+- Use `tasks_transition` with `requested_state: done` or `blocked` and all required finish metadata for queue-pickup work.
+- Use `tasks_reconcile_finish` when closing by `lifecycle_key`.
+- Call `tasks_claim_renew` before close if the lease is near expiry.
 - Task lifecycle reminder: `pickup -> start -> close`.
 
 ## Decision Gates
@@ -40,9 +42,12 @@ Use when a CapiForge task was already picked up and started, implementation is f
 3. Verify the adopted project matches the active claim context and that `lease_expires_at` is still in the future.
 4. Confirm the target is the intended task; do not silently switch to a different claimed, ready, or done task.
 5. If visible state already shows a terminal state, return an idempotent summary and stop.
-6. Prepare close metadata that satisfies repo conventions for `done`: justification plus result, affected artifacts, linked references, and expected impact.
-7. If a higher-level close wrapper exists, use it. Otherwise call `tasks.transition` / `tasks_transition` with `requested_state: done`, the active claim session context, and the close metadata.
-8. Report the accepted terminal transition, or surface the authoritative rejection without retry loops.
+6. Prepare close metadata that satisfies repo conventions:
+   - `done`: `done_result`, `done_artifacts`, `done_references`, `done_expected_impact`
+   - `blocked`: `blocked_reason`, `blocked_evidence`, `blocked_next_step`
+7. For queue-pickup work, call `tasks_transition` with the terminal `requested_state`, finish metadata, and active claim session context.
+8. For lifecycle work, call `tasks_reconcile_finish` with `lifecycle_key`, `outcome`, and the same finish metadata.
+9. Report the accepted terminal transition, or surface the authoritative rejection without retry loops.
 
 ## Output Contract
 
@@ -62,4 +67,6 @@ Return a concise operational summary with:
 - `contracts/mcp-surface.md`
 - `openspec/specs/task-audit-model/spec.md`
 - `skills/capiforge-pickup-task/SKILL.md`
+- `skills/capiforge-start-task/SKILL.md`
+- `skills/capiforge-data-layer/SKILL.md`
 - `skills/capiforge-start-task/SKILL.md`

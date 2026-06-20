@@ -19,6 +19,7 @@ from textual.widgets import DataTable, Footer, Input, Static
 
 from runtime.tui.commands import iter_shell_commands
 
+from runtime.paths import default_repo_root
 from runtime.tui.actions import (
     ActionResult,
     claim_task,
@@ -92,7 +93,7 @@ TASK_FILTERS = tuple(option[0] for option in TASK_FILTER_OPTIONS)
 
 def build_parser(*, prog: str = "capiforge tui") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog)
-    parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--repo-root", default=str(default_repo_root()))
     parser.add_argument("--node-home")
     parser.add_argument("--as-of")
     parser.add_argument("--theme", choices=theme_names(), default=None, help="Color theme: neon, notion, or light")

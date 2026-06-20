@@ -18,8 +18,10 @@ Use when a CapiForge task was already selected and claimed, and the orchestrator
 - Keep all technical artifacts, comments, identifiers, and summaries in English.
 - Prefer product-facing reads first: `current_get` when available; otherwise use `workspace_get_current`, `project_entrypoint_get`, `tasks_list_by_index`, and `sync_status`.
 - Resolve the target task only from explicit caller input or prior claimed-task context. If neither exists, stop and recommend `capiforge-pickup-task`.
-- Never start a task without a valid active claim. Treat `tasks.transition` / `tasks_transition` as the final authority for claim validity.
-- Validate project, task, claim, and lease context before attempting the state change.
+- Never start a task without a valid active claim.
+- Use `tasks_transition` with `requested_state: in_progress` for queue-pickup work.
+- Use `tasks_claim_renew` when the default lease may expire before work completes.
+- For create-on-miss lifecycle flows, use `audit_create_brief` → `audit_publish` → `tasks_reconcile_start`.
 - Task lifecycle reminder: `pickup -> start -> progress/close`.
 
 ## Decision Gates
@@ -39,8 +41,10 @@ Use when a CapiForge task was already selected and claimed, and the orchestrator
 3. Verify the adopted project matches the claimed-task context and that the lease expiry is still in the future.
 4. Confirm the task is the intended work item and not an unrelated ready task; do not silently switch targets.
 5. If available state already shows `in_progress`, return an idempotent summary and stop.
-6. Call `tasks.transition` / `tasks_transition` with `requested_state: in_progress`, real justification metadata, and the active claim session context required by the runtime.
-7. If the transition is accepted, report the task as started. If the runtime rejects because the claim is stale or missing, stop and instruct the orchestrator to re-run pickup/claim.
+6. Call `tasks_transition` with `requested_state: in_progress`, optional `summary` or `justification`, and the active claim session context required by the runtime.
+7. If the transition is accepted, report the task as started. If the runtime rejects because the claim is stale or missing, stop and instruct the orchestrator to re-run pickup/claim or call `tasks_claim_renew`.
+
+When automation needs to create the lifecycle task first, follow the supported public sequence: `audit_create_brief` → `audit_publish` → `tasks_reconcile_start`, and leave finish-time metadata collection for the later close step.
 
 ## Output Contract
 
@@ -59,3 +63,4 @@ Return a concise operational summary with:
 - `README.md`
 - `contracts/mcp-surface.md`
 - `skills/capiforge-pickup-task/SKILL.md`
+- `skills/capiforge-data-layer/SKILL.md`

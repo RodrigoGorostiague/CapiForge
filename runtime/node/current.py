@@ -187,6 +187,15 @@ def _validate_same_project_context(*, project_id: str, execution_context: dict[s
     return execution_context
 
 
+def _require_published_origin_audit(*, store: NodeStore, project_id: str, audit_id: str) -> dict[str, Any]:
+    audit = store.get_audit(audit_id)
+    if not audit or audit["project_id"] != project_id:
+        raise SurfaceError("INVALID_TASK_STATE", "lifecycle origin audit must stay within the adopted project")
+    if audit["state"] != "published":
+        raise SurfaceError("INVALID_TASK_STATE", "lifecycle create requires a published origin audit")
+    return audit
+
+
 def _mutation_id(*parts: str) -> str:
     digest = uuid5(NAMESPACE_URL, ":".join(parts)).hex[:16]
     return f"mut_{digest}"
@@ -416,6 +425,91 @@ def claim_ready_task(
     )
 
 
+def audit_create_brief(
+    bootstrap: NodeBootstrap,
+    *,
+    title: str,
+    content: str,
+    as_of: str | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "audit_create_brief",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_title = _require_text(title, field_name="title")
+    resolved_content = _require_text(content, field_name="content")
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
+        del store
+        project_id = state.adopted_project["project_id"]
+        audit_id = canonical_id("audit", project_id, resolved_as_of, resolved_title)
+        result = surface.audit_create_brief(
+            audit_id=audit_id,
+            project_id=project_id,
+            title=resolved_title,
+            content=resolved_content,
+            actor=actor,
+        )
+        surface.store.db.commit()
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            **result["data"],
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def audit_publish(
+    bootstrap: NodeBootstrap,
+    *,
+    audit_id: str,
+    as_of: str | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "audit_publish",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_audit_id = _require_text(audit_id, field_name="audit_id")
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, _resolved_as_of: str) -> dict[str, Any]:
+        del store
+        project_id = state.adopted_project["project_id"]
+        result = surface.audit_publish(project_id=project_id, audit_id=resolved_audit_id, actor=actor)
+        surface.store.db.commit()
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            **result["data"],
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
 def tasks_reconcile_start(
     bootstrap: NodeBootstrap,
     *,
@@ -466,6 +560,7 @@ def tasks_reconcile_start(
                 justification=justification,
                 execution_context=execution_context,
             )
+            _require_published_origin_audit(store=store, project_id=project_id, audit_id=create_origin_audit_id)
             create_execution_context = _validate_same_project_context(project_id=project_id, execution_context=create_execution_context)
             create_execution_context.update(
                 {
@@ -631,6 +726,234 @@ def tasks_reconcile_finish(
     return _with_adopted_surface(
         bootstrap,
         as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def _default_transition_justification(*, task_id: str, requested_state: str, summary: str | None = None) -> JustificationPayload:
+    return JustificationPayload(
+        summary=summary or f"Transition task {task_id} to {requested_state}",
+        evidence_refs=(task_id, requested_state),
+        expected_impact=f"Move task into state {requested_state}",
+    )
+
+
+def transition_task(
+    bootstrap: NodeBootstrap,
+    *,
+    task_id: str,
+    requested_state: str,
+    justification: JustificationPayload | dict[str, Any] | None = None,
+    summary: str | None = None,
+    as_of: str | None = None,
+    done_result: str | None = None,
+    done_artifacts: str | None = None,
+    done_references: str | None = None,
+    done_expected_impact: str | None = None,
+    blocked_reason: str | None = None,
+    blocked_evidence: str | None = None,
+    blocked_next_step: str | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "tasks_transition",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_task_id = _require_text(task_id, field_name="task_id")
+    resolved_state = _require_text(requested_state, field_name="requested_state")
+    metadata: dict[str, Any] = {}
+    if resolved_state == "done":
+        metadata.update(
+            _require_finish_metadata(
+                outcome="done",
+                done_result=done_result,
+                done_artifacts=done_artifacts,
+                done_references=done_references,
+                done_expected_impact=done_expected_impact,
+                blocked_reason=None,
+                blocked_evidence=None,
+                blocked_next_step=None,
+            )
+        )
+    elif resolved_state == "blocked":
+        metadata.update(
+            _require_finish_metadata(
+                outcome="blocked",
+                done_result=None,
+                done_artifacts=None,
+                done_references=None,
+                done_expected_impact=None,
+                blocked_reason=blocked_reason,
+                blocked_evidence=blocked_evidence,
+                blocked_next_step=blocked_next_step,
+            )
+        )
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        task = store.get_task(resolved_task_id)
+        if not task:
+            raise SurfaceError("UNKNOWN_RESOURCE", f"unknown task: {resolved_task_id}")
+        if task["project_id"] != project_id:
+            raise SurfaceError("INVALID_TASK_STATE", "task does not belong to the adopted project")
+        previous_state = task["state"]
+        justification_payload = (
+            _coerce_justification(justification)
+            if justification is not None
+            else _default_transition_justification(task_id=resolved_task_id, requested_state=resolved_state, summary=summary)
+        )
+        if resolved_state in {"claimed", "in_progress"}:
+            metadata["active_claim_session_id"] = actor.session_id
+        metadata["as_of"] = resolved_as_of
+        result = surface.tasks_transition(
+            project_id=project_id,
+            task_id=resolved_task_id,
+            mutation_id=_mutation_id("transition", resolved_task_id, actor.session_id, resolved_as_of, resolved_state),
+            actor=actor,
+            requested_state=resolved_state,
+            justification=justification_payload,
+            metadata=metadata,
+        )
+        if resolved_state in {"done", "blocked", "cancelled"} and surface.claims:
+            active_claim = surface.claims.get_active_claim(project_id=project_id, task_id=resolved_task_id, as_of=resolved_as_of)
+            if active_claim and active_claim.session_id == actor.session_id:
+                surface.tasks_release(
+                    project_id=project_id,
+                    task_id=resolved_task_id,
+                    claim_id=active_claim.claim_id,
+                    actor=actor,
+                )
+                store.clear_cached_claim(resolved_task_id)
+        store.db.commit()
+        refreshed_task = store.get_task(resolved_task_id)
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            "task_id": refreshed_task["task_id"],
+            "previous_state": previous_state,
+            "state": refreshed_task["state"],
+            "requested_state": resolved_state,
+            "authority_mode": result["data"].get("authority_mode"),
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def release_task(
+    bootstrap: NodeBootstrap,
+    *,
+    task_id: str,
+    claim_id: str,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "tasks_release",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_task_id = _require_text(task_id, field_name="task_id")
+    resolved_claim_id = _require_text(claim_id, field_name="claim_id")
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, _resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        result = surface.tasks_release(
+            project_id=project_id,
+            task_id=resolved_task_id,
+            claim_id=resolved_claim_id,
+            actor=actor,
+        )
+        store.clear_cached_claim(resolved_task_id)
+        store.db.commit()
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            **result["data"],
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=None,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def renew_task_claim(
+    bootstrap: NodeBootstrap,
+    *,
+    task_id: str,
+    claim_id: str,
+    lease_minutes: int,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "tasks_claim_renew",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_task_id = _require_text(task_id, field_name="task_id")
+    resolved_claim_id = _require_text(claim_id, field_name="claim_id")
+    if lease_minutes <= 0:
+        raise SurfaceError("INVALID_ARGUMENTS", "lease_minutes must be a positive integer")
+    renewed_at, lease_expires_at = resolve_lease_window(lease_minutes=lease_minutes)
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, _resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        if not surface.claims:
+            raise SurfaceError("UNKNOWN_RESOURCE", "claim registry is unavailable")
+        claim = surface.claims.renew_claim(
+            claim_id=resolved_claim_id,
+            actor=actor,
+            lease_expires_at=lease_expires_at,
+            renewed_at=renewed_at,
+        )
+        if claim.project_id != project_id or claim.task_id != resolved_task_id:
+            raise SurfaceError("INVALID_TASK_STATE", "claim does not match the supplied project and task")
+        store.cache_claim(
+            resolved_task_id,
+            claim.claim_id,
+            claim.status,
+            claim.lease_expires_at,
+            claim.node_id,
+            claim.agent_id,
+            claim.session_id,
+            claim.plan,
+        )
+        store.db.commit()
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            "claim_id": claim.claim_id,
+            "task_id": claim.task_id,
+            "status": claim.status,
+            "lease_expires_at": claim.lease_expires_at,
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=renewed_at,
         lock_timeout_seconds=lock_timeout_seconds,
         recover_stale_lock=recover_stale_lock,
         agent_id=agent_id,

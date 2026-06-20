@@ -4,3 +4,10 @@ __pycache__/
 demo-runtime/
 .capiforge/
 *.egg-info/
+build/
+dist/
+*.deb
+*.changes
+*.buildinfo
+*.dsc
+*.tar.gz

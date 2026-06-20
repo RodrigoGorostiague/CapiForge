@@ -794,7 +794,7 @@ class TextualHomeAppTest(unittest.IsolatedAsyncioTestCase):
         snapshot = self._sample_snapshot()
         app = HomeApp(repo_root="/tmp/demo", snapshot_loader=lambda **_kwargs: snapshot, show_startup_splash=False, theme="neon")
 
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
             await pilot.press("t")
             await pilot.pause()
             table = app.query_one("#tasks-table", DataTable)
@@ -1287,7 +1287,7 @@ class ThemeTest(unittest.TestCase):
     def test_build_task_table_row_renders_neon_state_pill(self) -> None:
         from runtime.tui.data import TaskPreview
         from runtime.tui.theme import set_active_theme, style_for_task_state
-        from runtime.tui.view import TASK_TABLE_COLUMNS, build_task_table_row
+        from runtime.tui.view import TASK_TABLE_COLUMNS, build_task_table_row, compute_task_column_widths
 
         set_active_theme("neon")
         task = TaskPreview(
@@ -1300,9 +1300,11 @@ class ThemeTest(unittest.TestCase):
             task_type="fix",
             origin_audit_id="aud_1",
         )
+        widths = {**compute_task_column_widths(120), "state": 14}
         row = build_task_table_row(
             task,
             audits=(AuditPreview(audit_id="aud_1", title="Design doc", state="published"),),
+            column_widths=widths,
         )
         self.assertEqual(len(row), len(TASK_TABLE_COLUMNS))
         self.assertEqual(row[0], "First task")

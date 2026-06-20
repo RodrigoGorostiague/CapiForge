@@ -72,6 +72,7 @@ invoke_core() {
     if [[ "${CAPIFORGE_INSTALL_UV:-0}" == "1" ]]; then
         args+=(--bootstrap-uv)
     fi
+    export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
     exec python3 "${CORE}" "${command}" "${args[@]}" "$@"
 }
 

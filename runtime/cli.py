@@ -27,6 +27,23 @@ def _build_parser() -> argparse.ArgumentParser:
     mcp_parser = subparsers.add_parser("mcp", help="Run MCP surfaces")
     mcp_subparsers = mcp_parser.add_subparsers(dest="mcp_command")
     mcp_subparsers.add_parser("serve", help="Start the local MCP stdio server")
+    audit_parser = subparsers.add_parser("audit", help="Create and publish adopted-project brief audits")
+    audit_subparsers = audit_parser.add_subparsers(dest="audit_command")
+    audit_create_parser = audit_subparsers.add_parser("create", help="Create a draft brief audit as a JSON envelope")
+    audit_create_parser.add_argument("--title")
+    audit_create_parser.add_argument("--content")
+    audit_create_parser.add_argument("--as-of")
+    audit_create_parser.add_argument("--repo-root")
+    audit_create_parser.add_argument("--node-home")
+    audit_create_parser.add_argument("--lock-timeout-seconds")
+    audit_create_parser.add_argument("--recover-stale-lock", action="store_true")
+    audit_publish_parser = audit_subparsers.add_parser("publish", help="Publish a draft brief audit as a JSON envelope")
+    audit_publish_parser.add_argument("--audit-id")
+    audit_publish_parser.add_argument("--as-of")
+    audit_publish_parser.add_argument("--repo-root")
+    audit_publish_parser.add_argument("--node-home")
+    audit_publish_parser.add_argument("--lock-timeout-seconds")
+    audit_publish_parser.add_argument("--recover-stale-lock", action="store_true")
     tasks_parser = subparsers.add_parser("tasks", help="Read task queues, execution claims, and lifecycle wrappers")
     tasks_subparsers = tasks_parser.add_subparsers(dest="tasks_command")
     tasks_subparsers.add_parser("ready", help="Read the adopted ready task queue as a JSON envelope")
@@ -120,12 +137,25 @@ def _handle_tasks(argv: Sequence[str]) -> int:
     return 1
 
 
+def _handle_audit(argv: Sequence[str]) -> int:
+    if len(argv) >= 2 and argv[0] == "audit" and argv[1] == "create":
+        return bootstrap_cli.main(["audit-create", *argv[2:]], prog="capiforge")
+    if len(argv) >= 2 and argv[0] == "audit" and argv[1] == "publish":
+        return bootstrap_cli.main(["audit-publish", *argv[2:]], prog="capiforge")
+    parser = _build_parser()
+    parser.parse_args(list(argv))
+    parser.print_help()
+    return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     if raw_argv and raw_argv[0] in BOOTSTRAP_COMMANDS:
         return bootstrap_cli.main(raw_argv, prog="capiforge")
     if len(raw_argv) >= 2 and raw_argv[0] == "mcp" and raw_argv[1] == "serve":
         return _handle_mcp_serve(raw_argv[2:])
+    if raw_argv and raw_argv[0] == "audit":
+        return _handle_audit(raw_argv)
     if raw_argv and raw_argv[0] == "tasks":
         return _handle_tasks(raw_argv)
     if raw_argv and raw_argv[0] == "tui":

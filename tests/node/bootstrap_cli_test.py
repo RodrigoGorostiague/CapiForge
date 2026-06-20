@@ -935,6 +935,162 @@ class BootstrapCliSurfaceTest(unittest.TestCase):
         self.assertEqual(payload["error"]["code"], "CLAIM_CONFLICT")
         self.assertIn("owned by another session", payload["error"]["message"])
 
+    def test_audit_create_and_publish_commands_return_json_envelopes(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+
+        create_exit_code, create_payload = self.invoke(
+            "audit-create",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T18:30:00Z",
+            "--title",
+            "CLI brief audit",
+            "--content",
+            "CLI audit body",
+        )
+
+        self.assertEqual(create_exit_code, 0)
+        self.assertEqual(create_payload["status"], "accepted")
+        self.assertEqual(create_payload["data"]["state"], "draft")
+
+        publish_exit_code, publish_payload = self.invoke(
+            "audit-publish",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--audit-id",
+            create_payload["data"]["audit_id"],
+        )
+
+        self.assertEqual(publish_exit_code, 0)
+        self.assertEqual(publish_payload["status"], "accepted")
+        self.assertEqual(publish_payload["data"]["state"], "published")
+
+        frozen_now = datetime(2026, 6, 19, 18, 35, 0, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            start_exit_code, start_payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/public-compose",
+                "--plan",
+                "Compose public audit lifecycle start",
+                "--origin-audit-id",
+                publish_payload["data"]["audit_id"],
+                "--description",
+                "Lifecycle-created task from public audit",
+                "--priority",
+                "high",
+                "--effort",
+                "low",
+                "--risk",
+                "low",
+                "--task-type",
+                "ops",
+                "--justification-json",
+                '{"summary":"Create lifecycle task","evidence_refs":["artifact://cli/public-compose"],"expected_impact":"Track public lifecycle start"}',
+                "--execution-context-json",
+                json.dumps({"project_id": adopted.adopted_project["project_id"], "steps": ["audit_publish", "claim", "start"]}, sort_keys=True),
+            )
+
+        self.assertEqual(start_exit_code, 0)
+        self.assertEqual(start_payload["status"], "accepted")
+        self.assertTrue(start_payload["data"]["created_task"])
+        self.assertEqual(start_payload["data"]["origin_audit_id"], publish_payload["data"]["audit_id"])
+
+    def test_tasks_start_rejects_draft_origin_audit(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+
+        create_exit_code, create_payload = self.invoke(
+            "audit-create",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--as-of",
+            "2026-06-19T18:30:00Z",
+            "--title",
+            "Draft CLI audit",
+            "--content",
+            "CLI audit body",
+        )
+        self.assertEqual(create_exit_code, 0)
+
+        frozen_now = datetime(2026, 6, 19, 18, 35, 0, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            exit_code, payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/draft-origin",
+                "--plan",
+                "Reject draft origin",
+                "--origin-audit-id",
+                create_payload["data"]["audit_id"],
+                "--description",
+                "Should fail",
+                "--priority",
+                "high",
+                "--effort",
+                "low",
+                "--risk",
+                "low",
+                "--task-type",
+                "ops",
+                "--justification-json",
+                '{"summary":"Reject draft audit origin","evidence_refs":["artifact://cli/draft-origin"],"expected_impact":"Prevent draft audit lifecycle create"}',
+                "--execution-context-json",
+                json.dumps({"project_id": adopted.adopted_project["project_id"]}, sort_keys=True),
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("published origin audit", payload["error"]["message"])
+
+    def test_audit_publish_rejects_foreign_project_audit(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.upsert_project("prj_other", adopted.adopted_project["workspace_id"], adopted.local_node_id, "project://other", "Other")
+        store.create_audit("aud_foreign", "prj_other", "draft", "Foreign audit", "Body")
+        store.db.commit()
+
+        exit_code, payload = self.invoke(
+            "audit-publish",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--audit-id",
+            "aud_foreign",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("adopted project", payload["error"]["message"])
+
     def test_tasks_start_creates_lifecycle_task_from_audit_seed(self) -> None:
         bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
         bootstrap.open_or_init(interactive=False)
@@ -1134,11 +1290,66 @@ class BootstrapCliSurfaceTest(unittest.TestCase):
         self.addCleanup(store.close)
         self.assertEqual(store.get_task("tsk_lifecycle_finish_expired")["state"], "ready")
 
+    def test_tasks_finish_rejects_missing_explicit_metadata_before_runtime(self) -> None:
+        bootstrap = NodeBootstrap(repo_root=self.repo_root, node_home=self.node_home)
+        bootstrap.open_or_init(interactive=False)
+        adopted = bootstrap.adopt_repo(interactive=False)
+        self._seed_lifecycle_task(
+            adopted.adopted_project["project_id"],
+            task_id="tsk_lifecycle_finish_missing_metadata",
+            audit_id="aud_lifecycle_finish_missing_metadata",
+            lifecycle_key="lifecycle://cli/finish-missing-metadata",
+        )
+
+        frozen_now = datetime(2026, 6, 19, 18, 20, 0, tzinfo=timezone.utc)
+        with patch("runtime.node.current.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = frozen_now
+            mocked_datetime.fromisoformat.side_effect = datetime.fromisoformat
+            start_exit_code, _start_payload = self.invoke(
+                "tasks-start",
+                "--repo-root",
+                str(self.repo_root),
+                "--node-home",
+                str(self.node_home),
+                "--lifecycle-key",
+                "lifecycle://cli/finish-missing-metadata",
+                "--plan",
+                "Resume lifecycle work",
+            )
+        self.assertEqual(start_exit_code, 0)
+
+        exit_code, payload = self.invoke(
+            "tasks-finish",
+            "--repo-root",
+            str(self.repo_root),
+            "--node-home",
+            str(self.node_home),
+            "--lifecycle-key",
+            "lifecycle://cli/finish-missing-metadata",
+            "--outcome",
+            "done",
+            "--as-of",
+            "2026-06-19T18:24:00Z",
+            "--done-result",
+            "Lifecycle work completed",
+            "--done-artifacts",
+            "artifact://cli/finish-missing-metadata",
+        )
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENTS")
+        self.assertIn("explicit finish metadata", payload["error"]["message"])
+
     def test_help_uses_english_lifecycle_terms(self) -> None:
         completed = self.invoke_subprocess_raw("--help")
 
         self.assertEqual(completed.returncode, 0)
         self.assertIn("Owner-local adopted-project JSON CLI", completed.stdout)
+        self.assertIn("audit-create", completed.stdout)
+        self.assertIn("audit-publish", completed.stdout)
+        self.assertIn("--title", completed.stdout)
+        self.assertIn("--audit-id", completed.stdout)
         self.assertIn("tasks-start", completed.stdout)
         self.assertIn("tasks-finish", completed.stdout)
         self.assertIn("--lifecycle-key", completed.stdout)

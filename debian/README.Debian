@@ -1,0 +1,36 @@
+CapiForge Debian package
+========================
+
+Supported platforms
+-------------------
+
+Primary PPA target: Ubuntu 24.04 (noble) with `python3-textual` from Ubuntu
+Universe. Ubuntu 22.04 (jammy) may require a companion `python3-textual`
+package in the same PPA when the archive version is too old for CapiForge TUI.
+
+Build locally
+-------------
+
+Install build dependencies:
+
+    sudo apt install devscripts debhelper dh-python pybuild-plugin-pyproject \
+        python3-all python3-setuptools python3-textual
+
+From the repository root:
+
+    ./scripts/build-deb.sh
+
+Publish to Launchpad PPA
+------------------------
+
+    debuild -S -sa
+    dput ppa:USER/capiforge ../capiforge_*_source.changes
+
+System package vs developer checkout
+------------------------------------
+
+`apt install capiforge` installs `/usr/bin/capiforge`, `/usr/bin/capinstall`,
+and share data under `/usr/share/capiforge`. Run `capinstall` afterward to
+configure Cursor/OpenCode MCP integrations for your project repository.
+`capinstall uninstall` removes integrations only; use `apt remove capiforge`
+to remove the system package.

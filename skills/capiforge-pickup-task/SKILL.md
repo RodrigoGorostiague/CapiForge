@@ -16,7 +16,7 @@ Use when an orchestrator needs the next actionable CapiForge task without making
 ## Hard Rules
 
 - Keep all technical artifacts, comments, identifiers, and summaries in English.
-- Prefer only the product-facing MCP tools: `current_get`, `tasks_ready_get`, and `tasks_claim`.
+- Prefer only the product-facing MCP tools: `current_get`, `tasks_ready_get`, `tasks_claim`, and `tasks_claim_renew` when extending a long session.
 - Read current state before claiming. Never claim blindly.
 - Use a bounded ready-task read and the default 5-minute lease unless the caller provides another lease.
 - Do not silently claim a different task after a failed claim unless the caller explicitly allowed fallback.

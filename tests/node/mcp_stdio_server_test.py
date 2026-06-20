@@ -251,6 +251,8 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(
             tool_names,
             {
+                "audit_create_brief",
+                "audit_publish",
                 "workspace_get_current",
                 "project_entrypoint_get",
                 "tasks_list_by_index",
@@ -258,17 +260,28 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
                 "current_get",
                 "tasks_ready_get",
                 "tasks_claim",
+                "tasks_transition",
+                "tasks_release",
+                "tasks_claim_renew",
                 "tasks_reconcile_start",
                 "tasks_reconcile_finish",
             },
         )
         self.assertEqual(
+            tool_descriptions["audit_create_brief"],
+            "Create a draft brief audit for the adopted project using the public owner-local surface.",
+        )
+        self.assertEqual(
+            tool_descriptions["audit_publish"],
+            "Publish a draft brief audit for the adopted project using the public owner-local surface.",
+        )
+        self.assertEqual(
             tool_descriptions["tasks_reconcile_start"],
-            "Reconcile owner-local same-project lifecycle work into an adopted in-progress task.",
+            "Reconcile owner-local same-project lifecycle work into an adopted in-progress task, creating on miss only from a published same-project audit.",
         )
         self.assertEqual(
             tool_descriptions["tasks_reconcile_finish"],
-            "Close owner-local adopted lifecycle work to done or blocked when the active claim is still valid.",
+            "Close owner-local adopted lifecycle work to done or blocked when the active claim is still valid and explicit finish metadata is supplied.",
         )
 
         workspace_payload = self._tool_payload(
@@ -468,9 +481,28 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(cli_payload["data"]["state"], "claimed")
         self.assertEqual(cli_payload["data"]["plan"], "Implement the ready task")
 
+        start_payload = self._tool_payload(
+            self._request(
+                4,
+                "tools/call",
+                {
+                    "name": "tasks_transition",
+                    "arguments": {
+                        "task_id": "tsk_ready",
+                        "requested_state": "in_progress",
+                        "summary": "Begin active work on the claimed task",
+                    },
+                },
+            )
+        )
+        self.assertEqual(start_payload["status"], "accepted")
+        self.assertEqual(start_payload["data"]["task_id"], "tsk_ready")
+        self.assertEqual(start_payload["data"]["previous_state"], "claimed")
+        self.assertEqual(start_payload["data"]["state"], "in_progress")
+
         ready_after_claim = self._tool_payload(
             self._request(
-                3,
+                5,
                 "tools/call",
                 {
                     "name": "tasks_ready_get",
@@ -585,6 +617,131 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(invalid_payload["error"]["code"], "INVALID_TASK_STATE")
         self.assertIn("must stay within the adopted project", invalid_payload["error"]["message"])
 
+    def test_stdio_server_composes_public_audit_publish_before_lifecycle_create(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        create_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "audit_create_brief",
+                    "arguments": {
+                        "title": "Composed stdio audit",
+                        "content": "Created before lifecycle start",
+                        "as_of": "2026-06-19T18:00:00Z",
+                    },
+                },
+            )
+        )
+        publish_payload = self._tool_payload(
+            self._request(
+                3,
+                "tools/call",
+                {
+                    "name": "audit_publish",
+                    "arguments": {"audit_id": create_payload["data"]["audit_id"]},
+                },
+            )
+        )
+        start_payload = self._tool_payload(
+            self._request(
+                4,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_start",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/public-compose",
+                        "plan": "Compose public audit lifecycle start",
+                        "origin_audit_id": publish_payload["data"]["audit_id"],
+                        "description": "MCP lifecycle task from public audit",
+                        "priority": "high",
+                        "effort": "medium",
+                        "risk": "low",
+                        "task_type": "ops",
+                        "justification": {
+                            "summary": "Create lifecycle task",
+                            "evidence_refs": [publish_payload["data"]["audit_id"]],
+                            "expected_impact": "Track public lifecycle start",
+                        },
+                        "execution_context": {"project_id": self.project_id, "steps": ["audit_publish", "claim", "start"]},
+                    },
+                },
+            )
+        )
+
+        self.assertEqual(start_payload["status"], "accepted")
+        self.assertTrue(start_payload["data"]["created_task"])
+        self.assertEqual(start_payload["data"]["origin_audit_id"], publish_payload["data"]["audit_id"])
+
+    def test_stdio_server_rejects_draft_origin_audit_for_lifecycle_create(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        create_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "audit_create_brief",
+                    "arguments": {
+                        "title": "Draft stdio audit",
+                        "content": "Still draft",
+                        "as_of": "2026-06-19T18:00:00Z",
+                    },
+                },
+            )
+        )
+        response = self._request(
+            3,
+            "tools/call",
+            {
+                "name": "tasks_reconcile_start",
+                "arguments": {
+                    "lifecycle_key": "lifecycle://stdio/draft-origin",
+                    "plan": "Reject draft audit origin",
+                    "origin_audit_id": create_payload["data"]["audit_id"],
+                    "description": "Should fail",
+                    "priority": "high",
+                    "effort": "low",
+                    "risk": "low",
+                    "task_type": "ops",
+                    "justification": {
+                        "summary": "Reject draft audit origin",
+                        "evidence_refs": [create_payload["data"]["audit_id"]],
+                        "expected_impact": "Prevent draft audit lifecycle create",
+                    },
+                    "execution_context": {"project_id": self.project_id},
+                },
+            },
+        )
+
+        self.assertIn("result", response)
+        self.assertTrue(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_TASK_STATE")
+        self.assertIn("published origin audit", payload["error"]["message"])
+
     def test_stdio_server_reports_claim_conflict_for_lifecycle_task_owned_by_another_session(self) -> None:
         self._seed_active_claim_for_task(
             task_id="tsk_lifecycle_ready",
@@ -622,6 +779,53 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(payload["status"], "error")
         self.assertEqual(payload["error"]["code"], "CLAIM_CONFLICT")
         self.assertIn("owned by another session", payload["error"]["message"])
+
+    def test_stdio_server_supports_public_audit_tool_flow(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        create_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "audit_create_brief",
+                    "arguments": {
+                        "title": "Stdio brief audit",
+                        "content": "Stdio audit body",
+                        "as_of": "2026-06-19T18:00:00Z",
+                    },
+                },
+            )
+        )
+        self.assertEqual(create_payload["status"], "accepted")
+        self.assertEqual(create_payload["data"]["state"], "draft")
+
+        publish_payload = self._tool_payload(
+            self._request(
+                3,
+                "tools/call",
+                {
+                    "name": "audit_publish",
+                    "arguments": {"audit_id": create_payload["data"]["audit_id"]},
+                },
+            )
+        )
+        self.assertEqual(publish_payload["status"], "accepted")
+        self.assertEqual(publish_payload["data"]["state"], "published")
+
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        self.assertEqual(store.get_audit(create_payload["data"]["audit_id"])["state"], "published")
 
     def test_stdio_server_supports_tasks_reconcile_finish_tool_flow(self) -> None:
         initialize = self._request(
@@ -675,6 +879,56 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.addCleanup(store.close)
         self.assertEqual(store.get_task("tsk_lifecycle_ready")["blocked_reason"], "Waiting on dependency")
         self.assertIsNone(store.get_cached_claim("tsk_lifecycle_ready"))
+
+    def test_stdio_server_rejects_finish_without_explicit_metadata(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+
+        start_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "tasks_reconcile_start",
+                    "arguments": {
+                        "lifecycle_key": "lifecycle://stdio/reuse",
+                        "plan": "Resume lifecycle work",
+                    },
+                },
+            )
+        )
+        self.assertEqual(start_payload["data"]["state"], "in_progress")
+
+        response = self._request(
+            3,
+            "tools/call",
+            {
+                "name": "tasks_reconcile_finish",
+                "arguments": {
+                    "lifecycle_key": "lifecycle://stdio/reuse",
+                    "outcome": "done",
+                    "as_of": "2026-06-19T18:04:00Z",
+                    "done_result": "Completed the lifecycle work",
+                    "done_artifacts": "artifact://stdio/finish-missing",
+                },
+            },
+        )
+
+        self.assertIn("result", response)
+        self.assertTrue(response["result"]["isError"])
+        payload = json.loads(response["result"]["content"][0]["text"])
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"]["code"], "INVALID_ARGUMENTS")
+        self.assertIn("explicit finish metadata", payload["error"]["message"])
 
     def test_stdio_server_upgrades_stale_owner_local_schema_before_lifecycle_reconcile_start(self) -> None:
         downgrade_owner_local_tasks_schema(self.node_home / "node.sqlite3")

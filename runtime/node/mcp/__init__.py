@@ -84,6 +84,12 @@ class NodeMCPSurface:
         if not self.store.has_project_access(self.local_node_id, project_id):
             raise SurfaceError("AUTHORIZATION_REQUIRED", f"node {self.local_node_id} is not authorized for project {project_id}")
 
+    def _require_owner_local_project_writer(self, *, project_id: str, actor: ActorIdentity | None) -> None:
+        self._require_project_reader(project_id=project_id, actor=actor)
+        owner_node_id = self.router.resolve_owner_node_id(project_id)
+        if actor is None or actor.node_id != owner_node_id:
+            raise SurfaceError("NON_OWNER_CANONICAL_WRITE", "only the owner node may create or publish audits for this project")
+
     def _sync_active_claim_state(self, *, project_id: str, task_id: str, as_of: str | None, expected_session_id: str | None = None) -> None:
         task = self._require_task(task_id)
         if task["state"] not in {"claimed", "in_progress"}:
@@ -284,6 +290,69 @@ class NodeMCPSurface:
             }
         self.store.record_task_mutation(mutation_id, task_id, actor.node_id, actor.agent_id, actor.session_id, json.dumps(mutation_payload, sort_keys=True), "canonical")
         return {"status": "accepted", "data": {"mutation_id": mutation_id, "task_id": task_id, "origin_audit_id": audit_id, "authority_mode": "canonical"}}
+
+    def audit_create_brief(
+        self,
+        *,
+        audit_id: str,
+        project_id: str,
+        title: str,
+        content: str,
+        actor: ActorIdentity,
+    ) -> dict:
+        self._require_owner_local_project_writer(project_id=project_id, actor=actor)
+        resolved_title = title.strip()
+        resolved_content = content.strip()
+        if not resolved_title:
+            raise SurfaceError("INVALID_ARGUMENTS", "title must be a non-empty string")
+        if not resolved_content:
+            raise SurfaceError("INVALID_ARGUMENTS", "content must be a non-empty string")
+        try:
+            self.store.create_audit(audit_id, project_id, "draft", resolved_title, resolved_content)
+        except sqlite3.IntegrityError as exc:
+            raise SurfaceError("INVALID_TASK_STATE", str(exc)) from exc
+        return {
+            "status": "accepted",
+            "data": {
+                "audit_id": audit_id,
+                "project_id": project_id,
+                "state": "draft",
+                "title": resolved_title,
+            },
+        }
+
+    def audit_publish(self, *, project_id: str, audit_id: str, actor: ActorIdentity) -> dict:
+        self._require_owner_local_project_writer(project_id=project_id, actor=actor)
+        audit = self.store.get_audit(audit_id)
+        if not audit:
+            raise unknown_resource("audit", audit_id)
+        if audit["project_id"] != project_id:
+            raise SurfaceError("INVALID_TASK_STATE", "audit does not belong to the adopted project")
+        if audit["state"] == "published":
+            return {
+                "status": "accepted",
+                "data": {
+                    "audit_id": audit_id,
+                    "project_id": project_id,
+                    "state": "published",
+                    "title": audit["title"],
+                },
+            }
+        if audit["state"] != "draft":
+            raise SurfaceError("INVALID_TASK_STATE", "audit publish requires a draft or already published audit")
+        if not audit["title"].strip() or not audit["content"].strip():
+            raise SurfaceError("INVALID_TASK_STATE", "audit publish requires non-empty title and content")
+        self.store.update_audit_state(audit_id, "published")
+        published = self.store.get_audit_for_project(project_id, audit_id)
+        return {
+            "status": "accepted",
+            "data": {
+                "audit_id": audit_id,
+                "project_id": project_id,
+                "state": published["state"],
+                "title": published["title"],
+            },
+        }
 
     def tasks_transition(
         self,

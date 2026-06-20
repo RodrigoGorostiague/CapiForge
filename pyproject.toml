@@ -8,14 +8,28 @@ version = "0.1.0"
 description = "CapiForge runtime bootstrap and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
-
-[project.optional-dependencies]
-tui = ["textual>=8,<9"]
+dependencies = [
+    "textual>=8,<9",
+]
 
 [project.scripts]
 capiforge = "runtime.cli:main"
+capinstall = "runtime.installer.entry:main"
 
 [tool.setuptools.packages.find]
 include = ["runtime*"]
 namespaces = true
+
+[tool.setuptools.data-files]
+"share/capiforge/storage" = [
+    "storage/node-schema.sql",
+    "storage/coordinator-schema.sql",
+]
+"share/capiforge/assets/capiforge-icons" = [
+    "assets/capiforge-icons/capiforge-ascii.txt",
+    "assets/capiforge-icons/capiforge-ascii-compact.txt",
+]
+"share/capiforge/skills/capiforge-close-task" = ["skills/capiforge-close-task/SKILL.md"]
+"share/capiforge/skills/capiforge-pickup-task" = ["skills/capiforge-pickup-task/SKILL.md"]
+"share/capiforge/skills/capiforge-start-task" = ["skills/capiforge-start-task/SKILL.md"]
+"share/capiforge/skills/capiforge-record-completed-work" = ["skills/capiforge-record-completed-work/SKILL.md"]

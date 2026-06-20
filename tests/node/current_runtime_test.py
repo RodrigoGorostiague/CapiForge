@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from runtime.coordinator.claims import ClaimRegistry
 from runtime.node.bootstrap import NodeBootstrap
-from runtime.node.current import tasks_reconcile_finish, tasks_reconcile_start
+from runtime.node.current import audit_create_brief, audit_publish, tasks_reconcile_finish, tasks_reconcile_start
 from runtime.node.store import NodeStore
 from runtime.shared.ids import ActorIdentity, derive_node_proof
 
@@ -95,6 +95,56 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
                 session_id=session_id,
             )
 
+    def test_audit_create_brief_creates_draft_for_adopted_project(self) -> None:
+        result = audit_create_brief(
+            self.bootstrap,
+            title="Public runtime audit",
+            content="Brief audit body",
+            as_of="2026-06-19T18:00:00Z",
+            agent_id="agent-audit",
+            session_id="sess-audit-create",
+        )
+
+        self.assertEqual(result["state"], "draft")
+        store = NodeStore.from_file(self.node_db_path)
+        self.addCleanup(store.close)
+        persisted = store.get_audit(result["audit_id"])
+        self.assertEqual(persisted["project_id"], self.state.adopted_project["project_id"])
+        self.assertEqual(persisted["title"], "Public runtime audit")
+        self.assertEqual(persisted["state"], "draft")
+
+    def test_audit_publish_promotes_adopted_project_draft_and_rejects_foreign_audit(self) -> None:
+        created = audit_create_brief(
+            self.bootstrap,
+            title="Publish runtime audit",
+            content="Brief audit body",
+            as_of="2026-06-19T18:00:00Z",
+            agent_id="agent-audit",
+            session_id="sess-audit-publish",
+        )
+
+        published = audit_publish(
+            self.bootstrap,
+            audit_id=created["audit_id"],
+            agent_id="agent-audit",
+            session_id="sess-audit-publish",
+        )
+        self.assertEqual(published["state"], "published")
+
+        store = NodeStore.from_file(self.node_db_path)
+        self.addCleanup(store.close)
+        store.upsert_project("prj_other", self.state.adopted_project["workspace_id"], self.state.local_node_id, "project://other", "Other")
+        store.create_audit("aud_other", "prj_other", "draft", "Foreign", "Body")
+        store.db.commit()
+
+        with self.assertRaisesRegex(ValueError, "adopted project"):
+            audit_publish(
+                self.bootstrap,
+                audit_id="aud_other",
+                agent_id="agent-audit",
+                session_id="sess-audit-publish",
+            )
+
     def test_reconcile_start_creates_missing_task_from_audit_and_claims_it(self) -> None:
         store = NodeStore.from_file(self.node_db_path)
         self._seed_audit(store)
@@ -123,6 +173,7 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
 
         self.assertEqual(result["state"], "in_progress")
         self.assertTrue(result["created_task"])
+        self.assertEqual(result["origin_audit_id"], "aud_lifecycle")
         store = NodeStore.from_file(self.node_db_path)
         self.addCleanup(store.close)
         persisted = store.get_task(result["task_id"])
@@ -131,6 +182,82 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
         execution_context = json.loads(persisted["execution_context_json"])
         self.assertEqual(execution_context["project_id"], self.state.adopted_project["project_id"])
         self.assertEqual(execution_context["lifecycle_creator"]["session_id"], "sess-create")
+
+    def test_reconcile_start_composes_public_audit_publish_before_create_on_miss(self) -> None:
+        created = audit_create_brief(
+            self.bootstrap,
+            title="Lifecycle public audit",
+            content="Published before lifecycle start",
+            as_of="2026-06-19T18:00:00Z",
+            agent_id="agent-audit",
+            session_id="sess-public-compose",
+        )
+        published = audit_publish(
+            self.bootstrap,
+            audit_id=created["audit_id"],
+            agent_id="agent-audit",
+            session_id="sess-public-compose",
+        )
+
+        result = tasks_reconcile_start(
+            self.bootstrap,
+            lifecycle_key="lifecycle://runtime/public-compose",
+            plan="Compose public audit lifecycle start",
+            lease_minutes=5,
+            origin_audit_id=published["audit_id"],
+            description="Lifecycle task from public audit",
+            priority="high",
+            effort="medium",
+            risk="low",
+            task_type="ops",
+            justification={
+                "summary": "No reusable lifecycle task exists",
+                "evidence_refs": [published["audit_id"]],
+                "expected_impact": "Create lifecycle work from the published public audit",
+            },
+            execution_context={"project_id": self.state.adopted_project["project_id"], "steps": ["audit_publish", "claim", "start"]},
+            agent_id="agent-lifecycle",
+            session_id="sess-public-compose",
+        )
+
+        self.assertTrue(result["created_task"])
+        self.assertEqual(result["origin_audit_id"], published["audit_id"])
+        store = NodeStore.from_file(self.node_db_path)
+        self.addCleanup(store.close)
+        persisted = store.get_task(result["task_id"])
+        self.assertEqual(persisted["origin_audit_id"], published["audit_id"])
+
+    def test_reconcile_start_rejects_non_published_origin_audit_on_create_miss(self) -> None:
+        created = audit_create_brief(
+            self.bootstrap,
+            title="Draft lifecycle audit",
+            content="Still a draft",
+            as_of="2026-06-19T18:00:00Z",
+            agent_id="agent-audit",
+            session_id="sess-draft-origin",
+        )
+
+        with self.assertRaisesRegex(ValueError, "published origin audit"):
+            tasks_reconcile_start(
+                self.bootstrap,
+                lifecycle_key="lifecycle://runtime/draft-origin",
+                plan="Reject draft origin audit",
+                lease_minutes=5,
+                origin_audit_id=created["audit_id"],
+                description="Should fail",
+                priority="high",
+                effort="low",
+                risk="low",
+                task_type="ops",
+                justification={
+                    "summary": "Reject draft audit origin",
+                    "evidence_refs": [created["audit_id"]],
+                    "expected_impact": "Prevent task creation from a draft audit",
+                },
+                execution_context={"project_id": self.state.adopted_project["project_id"]},
+                agent_id="agent-lifecycle",
+                session_id="sess-draft-origin",
+            )
 
     def test_reconcile_start_reuses_ready_claimed_in_progress_and_blocked_tasks(self) -> None:
         scenarios = (
@@ -277,6 +404,27 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
         self.assertEqual(persisted["state"], "ready")
         self.assertIsNone(persisted["done_result"])
         self.assertIsNone(persisted["blocked_reason"])
+
+    def test_reconcile_finish_rejects_missing_explicit_metadata(self) -> None:
+        started = self._start_lifecycle_task(lifecycle_key="lifecycle://runtime/finish/missing-metadata", session_id="sess-finish-missing")
+
+        with self.assertRaisesRegex(ValueError, "lifecycle finish requires: done_references, done_expected_impact"):
+            tasks_reconcile_finish(
+                self.bootstrap,
+                lifecycle_key="lifecycle://runtime/finish/missing-metadata",
+                outcome="done",
+                as_of="2026-06-19T18:04:00Z",
+                done_result="Implemented the lifecycle closeout",
+                done_artifacts="artifact://runtime/finish/missing-metadata",
+                agent_id="agent-lifecycle",
+                session_id="sess-finish-missing",
+            )
+
+        store = NodeStore.from_file(self.node_db_path)
+        self.addCleanup(store.close)
+        persisted = store.get_task(started["task_id"])
+        self.assertEqual(persisted["state"], "in_progress")
+        self.assertIsNone(persisted["done_result"])
 
     def test_reconcile_start_and_finish_upgrade_stale_owner_local_schema_before_lifecycle_access(self) -> None:
         self._downgrade_owner_local_tasks_schema()

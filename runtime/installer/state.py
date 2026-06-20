@@ -43,6 +43,7 @@ class IntegrationPaths:
 class InstallerState:
     version: int = STATE_VERSION
     installed_at: str = ""
+    install_mode: str = "uv"
     backend: str = "uv"
     capiforge_bin: str = ""
     repo_root: str = ""
@@ -59,6 +60,7 @@ class InstallerState:
             version=int(payload.get("version", STATE_VERSION)),
             installed_at=str(payload.get("installed_at", "")),
             backend=str(payload.get("backend", "uv")),
+            install_mode=str(payload.get("install_mode", payload.get("backend", "uv"))),
             capiforge_bin=str(payload.get("capiforge_bin", "")),
             repo_root=str(payload.get("repo_root", "")),
             node_home=str(payload.get("node_home", "")),
@@ -114,6 +116,19 @@ def default_integration_paths(*, repo_root: Path, home: Path | None = None) -> I
 
 def detect_capiforge_bin() -> str | None:
     return shutil.which("capiforge")
+
+
+def _is_deb_install(capiforge_bin: str | None = None) -> bool:
+    if not capiforge_bin:
+        capiforge_bin = detect_capiforge_bin()
+    if not capiforge_bin:
+        return False
+    try:
+        from runtime.paths import system_share_installed
+
+        return system_share_installed()
+    except Exception:
+        return False
 
 
 def detect_backend(capiforge_bin: str | None = None) -> str | None:
@@ -178,9 +193,11 @@ def detect_existing_state(*, checkout_root: Path | None = None) -> InstallerStat
     repo_root = repo_root.resolve()
     node_home = repo_root / ".capiforge" / "node"
     backend = detect_backend(capiforge_bin) or "unknown"
+    install_mode = "deb" if _is_deb_install(capiforge_bin) else backend
     integration_paths = default_integration_paths(repo_root=repo_root)
 
     return InstallerState(
+        install_mode=install_mode,
         backend=backend,
         capiforge_bin=capiforge_bin,
         repo_root=str(repo_root),

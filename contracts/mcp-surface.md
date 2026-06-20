@@ -31,6 +31,10 @@
 | `tasks.create_from_audit` | Create a task with one published origin audit | canonical IDs, actor identity, justification, task fields, execution context | `accepted` or `proposal_emitted` |
 | `cross_project.request` | Route approved cross-project work to destination owner | source/destination project IDs, actor identity, justification, coordinator-recorded notice/approval for that source→destination pair | `routed` |
 
+Public brief-audit lifecycle composition stays explicit in V1: callers MAY run `audit_create_brief -> audit_publish -> tasks_reconcile_start -> tasks_reconcile_finish`, but `tasks_reconcile_start` MUST only create on miss from a published same-project audit and `tasks_reconcile_finish` MUST reject requests that omit outcome-specific finish metadata.
+
+The stdio MCP surface also exposes queue-pickup helpers: `tasks_transition`, `tasks_release`, and `tasks_claim_renew`. `tasks_transition` MUST validate active claims for `claimed` and `in_progress` targets and MUST require explicit finish metadata for `done` and `blocked`.
+
 ### Human Control
 
 | Command | Purpose | Required Input | Success Status |

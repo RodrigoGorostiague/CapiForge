@@ -16,8 +16,14 @@ class SplashContent:
     lines: tuple[str, ...]
 
 
-def load_splash_art(*, repo_root: str | Path) -> str:
-    logo_path = Path(repo_root) / ASCII_LOGO_PATH
+from runtime.paths import asset_path, default_repo_root
+
+
+def load_splash_art(*, repo_root: str | Path | None = None) -> str:
+    if repo_root is not None:
+        logo_path = Path(repo_root) / "assets/capiforge-icons/capiforge-ascii.txt"
+    else:
+        logo_path = asset_path("assets/capiforge-icons/capiforge-ascii.txt")
     try:
         return logo_path.read_text(encoding="utf-8")
     except OSError:

@@ -5,12 +5,43 @@ import json
 import sys
 
 from runtime.node.bootstrap import DEFAULT_BOOTSTRAP_LOCK_TIMEOUT_SECONDS, BootstrapState, NodeBootstrap
-from runtime.node.current import claim_ready_task, read_current, read_ready_tasks, state_payload, tasks_reconcile_finish, tasks_reconcile_start
+from runtime.node.current import audit_create_brief, audit_publish, claim_ready_task, read_current, read_ready_tasks, state_payload, tasks_reconcile_finish, tasks_reconcile_start
 from runtime.shared.errors import SurfaceError
 
 
 LOCAL_AGENT_ID = "capiforge-cli"
 LOCAL_SESSION_ID = "capiforge-cli-current"
+
+
+def _require_finish_metadata_arguments(
+    *,
+    outcome: str,
+    done_result: str | None,
+    done_artifacts: str | None,
+    done_references: str | None,
+    done_expected_impact: str | None,
+    blocked_reason: str | None,
+    blocked_evidence: str | None,
+    blocked_next_step: str | None,
+) -> None:
+    if outcome == "done":
+        required_fields = {
+            "--done-result": done_result,
+            "--done-artifacts": done_artifacts,
+            "--done-references": done_references,
+            "--done-expected-impact": done_expected_impact,
+        }
+    elif outcome == "blocked":
+        required_fields = {
+            "--blocked-reason": blocked_reason,
+            "--blocked-evidence": blocked_evidence,
+            "--blocked-next-step": blocked_next_step,
+        }
+    else:
+        raise SurfaceError("INVALID_ARGUMENTS", "tasks-finish requires --outcome to be 'done' or 'blocked'")
+    missing = [field_name for field_name, value in required_fields.items() if not isinstance(value, str) or not value.strip()]
+    if missing:
+        raise SurfaceError("INVALID_ARGUMENTS", f"tasks-finish requires explicit finish metadata: {', '.join(missing)}")
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -158,6 +189,33 @@ def _run_command(args: argparse.Namespace, bootstrap: NodeBootstrap) -> int:
         )
         return _print_envelope(status="claimed", data=claimed_task, error=None)
 
+    if args.command == "audit-create":
+        if not args.title:
+            raise SurfaceError("INVALID_ARGUMENTS", "audit-create requires --title")
+        if not args.content:
+            raise SurfaceError("INVALID_ARGUMENTS", "audit-create requires --content")
+        created_audit = _create_brief_audit(
+            bootstrap,
+            title=args.title,
+            content=args.content,
+            as_of=args.as_of,
+            wait_reporter=wait_reporter,
+            **bootstrap_options,
+        )
+        return _print_envelope(status="accepted", data=created_audit, error=None)
+
+    if args.command == "audit-publish":
+        if not args.audit_id:
+            raise SurfaceError("INVALID_ARGUMENTS", "audit-publish requires --audit-id")
+        published_audit = _publish_brief_audit(
+            bootstrap,
+            audit_id=args.audit_id,
+            as_of=args.as_of,
+            wait_reporter=wait_reporter,
+            **bootstrap_options,
+        )
+        return _print_envelope(status="accepted", data=published_audit, error=None)
+
     if args.command == "tasks-start":
         if not args.lifecycle_key:
             raise SurfaceError("INVALID_ARGUMENTS", "tasks-start requires --lifecycle-key")
@@ -186,6 +244,16 @@ def _run_command(args: argparse.Namespace, bootstrap: NodeBootstrap) -> int:
             raise SurfaceError("INVALID_ARGUMENTS", "tasks-finish requires --lifecycle-key")
         if not args.outcome:
             raise SurfaceError("INVALID_ARGUMENTS", "tasks-finish requires --outcome")
+        _require_finish_metadata_arguments(
+            outcome=args.outcome,
+            done_result=args.done_result,
+            done_artifacts=args.done_artifacts,
+            done_references=args.done_references,
+            done_expected_impact=args.done_expected_impact,
+            blocked_reason=args.blocked_reason,
+            blocked_evidence=args.blocked_evidence,
+            blocked_next_step=args.blocked_next_step,
+        )
         finished_task = _reconcile_finish_task(
             bootstrap,
             lifecycle_key=args.lifecycle_key,
@@ -295,6 +363,58 @@ def _claim_ready_task(
     )
 
 
+def _create_brief_audit(
+    bootstrap: NodeBootstrap,
+    *,
+    title: str,
+    content: str,
+    as_of: str | None,
+    lock_timeout_seconds: float,
+    interactive: bool,
+    verbose: bool,
+    recover_stale_lock: bool,
+    wait_reporter,
+) -> dict:
+    del interactive, verbose
+    return audit_create_brief(
+        bootstrap,
+        title=title,
+        content=content,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=LOCAL_AGENT_ID,
+        session_id=LOCAL_SESSION_ID,
+        command="audit_create_brief",
+        wait_reporter=wait_reporter,
+    )
+
+
+def _publish_brief_audit(
+    bootstrap: NodeBootstrap,
+    *,
+    audit_id: str,
+    as_of: str | None,
+    lock_timeout_seconds: float,
+    interactive: bool,
+    verbose: bool,
+    recover_stale_lock: bool,
+    wait_reporter,
+) -> dict:
+    del interactive, verbose
+    return audit_publish(
+        bootstrap,
+        audit_id=audit_id,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=LOCAL_AGENT_ID,
+        session_id=LOCAL_SESSION_ID,
+        command="audit_publish",
+        wait_reporter=wait_reporter,
+    )
+
+
 def _reconcile_start_task(
     bootstrap: NodeBootstrap,
     *,
@@ -385,25 +505,31 @@ def build_parser(*, prog: str = "capiforge", repo_root_default: str = ".") -> ar
     parser = JsonArgumentParser(
         prog=prog,
         description=(
-            "Owner-local adopted-project JSON CLI for bootstrap state, ready-task claims, "
+            "Owner-local adopted-project JSON CLI for bootstrap state, public brief audits, ready-task claims, "
             "and lifecycle start/finish reconciliation."
         ),
         epilog=(
+            "Audit commands:\n"
+            "  audit-create  Create a draft brief audit for the adopted project.\n"
+            "  audit-publish Publish a draft brief audit for the adopted project.\n\n"
             "Lifecycle commands:\n"
             "  tasks-start   Reconcile owner-local same-project lifecycle work into an adopted in-progress task.\n"
             "  tasks-finish  Close owner-local adopted lifecycle work to done or blocked when the active claim is still valid."
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("command", choices=("init", "adopt", "status", "read", "current", "tasks-ready", "tasks-claim", "tasks-start", "tasks-finish"))
+    parser.add_argument("command", choices=("init", "adopt", "status", "read", "current", "audit-create", "audit-publish", "tasks-ready", "tasks-claim", "tasks-start", "tasks-finish"))
     parser.add_argument("--repo-root", default=repo_root_default)
     parser.add_argument("--node-home")
     parser.add_argument("--as-of")
     parser.add_argument("--task-id")
+    parser.add_argument("--audit-id")
     parser.add_argument("--lifecycle-key", help="Deterministic lifecycle key for same-project task reconciliation.")
+    parser.add_argument("--title", help="Brief-audit title used for draft creation.")
+    parser.add_argument("--content", help="Brief-audit content used for draft creation.")
     parser.add_argument("--outcome", help="Lifecycle closeout outcome: done or blocked.")
     parser.add_argument("--plan", help="Claim plan recorded when lifecycle work starts.")
-    parser.add_argument("--origin-audit-id", help="Published origin audit required for lifecycle auto-create on miss.")
+    parser.add_argument("--origin-audit-id", help="Published same-project origin audit required for lifecycle auto-create on miss.")
     parser.add_argument("--description", help="Task description used only when lifecycle start creates a new task.")
     parser.add_argument("--priority")
     parser.add_argument("--effort")
@@ -411,13 +537,13 @@ def build_parser(*, prog: str = "capiforge", repo_root_default: str = ".") -> ar
     parser.add_argument("--task-type")
     parser.add_argument("--justification-json", help="JSON object with lifecycle task justification metadata.")
     parser.add_argument("--execution-context-json", help="JSON object that must stay within the adopted project.")
-    parser.add_argument("--done-result", help="Required done summary for lifecycle finish --outcome done.")
-    parser.add_argument("--done-artifacts", help="Required done artifacts reference for lifecycle finish --outcome done.")
-    parser.add_argument("--done-references", help="Required done linked references for lifecycle finish --outcome done.")
-    parser.add_argument("--done-expected-impact", help="Required done expected impact for lifecycle finish --outcome done.")
-    parser.add_argument("--blocked-reason", help="Required blocked reason for lifecycle finish --outcome blocked.")
-    parser.add_argument("--blocked-evidence", help="Required blocked evidence reference for lifecycle finish --outcome blocked.")
-    parser.add_argument("--blocked-next-step", help="Required blocked next step for lifecycle finish --outcome blocked.")
+    parser.add_argument("--done-result", help="Required explicit done summary for lifecycle finish --outcome done.")
+    parser.add_argument("--done-artifacts", help="Required explicit done artifacts reference for lifecycle finish --outcome done.")
+    parser.add_argument("--done-references", help="Required explicit done linked references for lifecycle finish --outcome done.")
+    parser.add_argument("--done-expected-impact", help="Required explicit done expected impact for lifecycle finish --outcome done.")
+    parser.add_argument("--blocked-reason", help="Required explicit blocked reason for lifecycle finish --outcome blocked.")
+    parser.add_argument("--blocked-evidence", help="Required explicit blocked evidence reference for lifecycle finish --outcome blocked.")
+    parser.add_argument("--blocked-next-step", help="Required explicit blocked next step for lifecycle finish --outcome blocked.")
     parser.add_argument("--lease-minutes", type=_positive_int, default=5)
     parser.add_argument("--ready-limit", type=_positive_int, default=10)
     parser.add_argument("--limit", type=_positive_int, default=20)

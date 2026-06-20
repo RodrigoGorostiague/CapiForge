@@ -61,6 +61,32 @@ class IntegrationConfigTest(unittest.TestCase):
             self.assertNotIn("capiforge", payload.get("mcpServers", {}))
             self.assertIn("existing", payload["mcpServers"])
 
+    def test_cursor_skills_install_and_remove(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "project"
+            repo_root.mkdir()
+            for skill_name in (
+                "capiforge-pickup-task",
+                "capiforge-start-task",
+                "capiforge-close-task",
+                "capiforge-data-layer",
+                "capiforge-record-completed-work",
+            ):
+                source = REPO_ROOT / "skills" / skill_name
+                target = repo_root / "skills" / skill_name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(source, target)
+            from runtime.installer.integration_config import (
+                remove_cursor_skills_artifacts,
+                verify_cursor_skills,
+                write_cursor_skills_artifacts,
+            )
+
+            write_cursor_skills_artifacts(repo_root=str(repo_root))
+            self.assertEqual(verify_cursor_skills(repo_root=str(repo_root)), [])
+            remove_cursor_skills_artifacts(repo_root=str(repo_root))
+            self.assertTrue(any("missing Cursor skill artifact" in issue for issue in verify_cursor_skills(repo_root=str(repo_root))))
+
     def test_opencode_merge_and_remove(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "opencode.json"
@@ -84,6 +110,7 @@ class IntegrationConfigTest(unittest.TestCase):
             payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertIn("capiforge", payload["mcp"])
             self.assertEqual(payload["mcp"]["capiforge"]["type"], "local")
+            self.assertIn(str(config_path.parent / "skills"), payload["skills"]["paths"])
 
             subprocess.run(
                 ["python3", str(INTEGRATION), "remove-opencode", "--config-path", str(config_path)],
@@ -91,6 +118,7 @@ class IntegrationConfigTest(unittest.TestCase):
             )
             payload = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertNotIn("capiforge", payload.get("mcp", {}))
+            self.assertNotIn(str(config_path.parent / "skills"), payload.get("skills", {}).get("paths", []))
 
 
 class InstallerStateTest(unittest.TestCase):
@@ -121,6 +149,34 @@ class InstallerStateTest(unittest.TestCase):
             self.assertEqual(write.returncode, 0)
             payload = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["targets"], ["cursor"])
+
+
+class DebInstallModeTest(unittest.TestCase):
+    def test_detect_system_package_false_in_dev_checkout(self) -> None:
+        from runtime.installer.core import detect_system_package
+        from runtime.paths import system_share_installed
+
+        self.assertFalse(system_share_installed())
+        if shutil.which("capiforge"):
+            self.assertFalse(detect_system_package())
+
+    def test_detect_system_package_true_when_system_share_exists(self) -> None:
+        from runtime.installer.core import detect_system_package
+
+        with patch("runtime.installer.core.detect_capiforge_bin", return_value="/usr/bin/capiforge"):
+            with patch("runtime.installer.core._run", return_value=type("R", (), {"returncode": 0, "stdout": "capiforge 0.1.0"})()):
+                with patch("runtime.installer.core.system_share_installed", return_value=True):
+                    self.assertTrue(detect_system_package())
+
+    def test_install_binary_uses_deb_mode_when_system_package_detected(self) -> None:
+        from runtime.installer.core import InstallOptions, install_binary
+
+        options = InstallOptions(checkout_root=REPO_ROOT, targets=["cursor"])
+        with patch("runtime.installer.core.detect_system_package", return_value=True):
+            with patch("runtime.installer.core.detect_capiforge_bin", return_value="/usr/bin/capiforge"):
+                capiforge_bin, install_mode = install_binary(options)
+        self.assertEqual(capiforge_bin, "/usr/bin/capiforge")
+        self.assertEqual(install_mode, "deb")
 
 
 @unittest.skipUnless(shutil.which("uv") or shutil.which("pipx"), "uv or pipx required for installer core integration test")
@@ -162,6 +218,9 @@ class InstallerCoreTest(unittest.TestCase):
             self.assertTrue((fake_home / ".capiforge" / "installer-state.json").exists())
             self.assertTrue((fake_home / ".cursor" / "mcp.json").exists())
             self.assertTrue((fake_home / ".config" / "opencode" / "opencode.json").exists())
+            self.assertTrue(
+                (fake_home / ".config" / "opencode" / "skills" / "capiforge-record-completed-work" / "SKILL.md").exists()
+            )
             self.assertTrue((repo_root / ".capiforge" / "node" / "bootstrap.json").exists())
 
             update = subprocess.run(
@@ -174,6 +233,30 @@ class InstallerCoreTest(unittest.TestCase):
             )
             self.assertTrue(json.loads(update.stdout)["ok"], update.stderr)
 
+            skill_file = fake_home / ".config" / "opencode" / "skills" / "capiforge-record-completed-work" / "SKILL.md"
+            skill_file.unlink()
+            verify = subprocess.run(
+                ["python3", str(CORE), "verify", "--json"],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            verify_payload = json.loads(verify.stdout)
+            self.assertFalse(verify_payload["ok"])
+            self.assertTrue(any("missing OpenCode automation artifact" in issue for issue in verify_payload["issues"]))
+
+            restore = subprocess.run(
+                ["python3", str(CORE), "update", "--json"],
+                cwd=REPO_ROOT,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue(json.loads(restore.stdout)["ok"], restore.stderr)
+
             uninstall = subprocess.run(
                 ["python3", str(CORE), "uninstall", "--json"],
                 cwd=REPO_ROOT,
@@ -185,6 +268,9 @@ class InstallerCoreTest(unittest.TestCase):
             summary = json.loads(uninstall.stdout)["summary"]
             self.assertTrue(summary["cleared_state"])
             self.assertFalse((fake_home / ".capiforge" / "installer-state.json").exists())
+            self.assertFalse(
+                (fake_home / ".config" / "opencode" / "skills" / "capiforge-record-completed-work" / "SKILL.md").exists()
+            )
 
 
 try:

@@ -14,13 +14,10 @@ from textual.screen import Screen
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from runtime.installer.state import detect_capiforge_bin, detect_existing_state, load_state  # noqa: E402
-from runtime.tui.splash import SPLASH_DURATION_SECONDS, SplashContent, build_splash_content, load_splash_art  # noqa: E402
-from scripts.installer_core import (  # noqa: E402
+from runtime.paths import asset_path, dev_repo_root, default_repo_root
+from runtime.installer.state import detect_capiforge_bin, detect_existing_state, load_state
+from runtime.tui.splash import SPLASH_DURATION_SECONDS, SplashContent, build_splash_content, load_splash_art
+from runtime.installer.core import (
     InstallOptions,
     InstallerError,
     run_install,
@@ -43,12 +40,19 @@ class UninstallDraft:
     remove_bootstrap: bool = False
 
 
-COMPACT_ASCII_PATH = REPO_ROOT / "assets/capiforge-icons/capiforge-ascii-compact.txt"
+CHECKOUT_ROOT = dev_repo_root()
+
+
+def _default_repo_root() -> str:
+    return str(default_repo_root())
+
+
+COMPACT_ASCII_PATH = asset_path("assets/capiforge-icons/capiforge-ascii-compact.txt")
 LAUNCH_SPLASH_SECONDS = SPLASH_DURATION_SECONDS
 
 
 def _launch_splash_content(*, width: int, height: int) -> SplashContent:
-    full_art = load_splash_art(repo_root=REPO_ROOT)
+    full_art = load_splash_art()
     content = build_splash_content(
         available_width=max(20, width),
         available_height=max(8, height),
@@ -73,7 +77,7 @@ def _toggle_label(checked: bool, label: str) -> str:
 
 
 def _status_summary() -> str:
-    state = load_state() or detect_existing_state(checkout_root=REPO_ROOT)
+    state = load_state() or detect_existing_state(checkout_root=CHECKOUT_ROOT)
     lines = ["CapiForge installer for local MCP + task workflows."]
     if state is None:
         lines.append("Status: not installed")
@@ -192,7 +196,7 @@ class MainMenuScreen(MenuScreen):
 
     def handle_option(self, option_id: str) -> None:
         if option_id == "install":
-            self.app.push_screen(IntegrationsScreen(InstallDraft(repo_root=str(REPO_ROOT))))
+            self.app.push_screen(IntegrationsScreen(InstallDraft(repo_root=_default_repo_root())))
         elif option_id == "update":
             self.app.push_screen(ConfirmActionScreen("update"))
         elif option_id == "uninstall":
@@ -269,8 +273,8 @@ class RepoRootScreen(MenuScreen):
         yield Vertical(
             Static(self.menu_title, classes="installer-title"),
             Static(self.menu_subtitle, classes="installer-subtitle"),
-            Static(f"Node home: {Path(self.draft.repo_root or REPO_ROOT) / '.capiforge' / 'node'}", classes="installer-note"),
-            Input(value=self.draft.repo_root or str(REPO_ROOT), id="repo-root"),
+            Static(f"Node home: {Path(self.draft.repo_root or _default_repo_root()) / '.capiforge' / 'node'}", classes="installer-note"),
+            Input(value=self.draft.repo_root or _default_repo_root(), id="repo-root"),
             OptionList(Option("Continue →", id="continue"), id="menu-options"),
             Static(self.menu_hint, classes="installer-hint"),
             classes="installer-shell",
@@ -403,7 +407,7 @@ class InstallProgressScreen(Screen):
         if self.draft.opencode:
             targets.append("opencode")
         options = InstallOptions(
-            checkout_root=REPO_ROOT,
+            checkout_root=CHECKOUT_ROOT,
             repo_root=Path(self.draft.repo_root),
             targets=targets,
             install_tui_extra=self.draft.install_tui_extra,
@@ -479,7 +483,7 @@ class ActionProgressScreen(Screen):
         log = self.query_one("#progress-log", Static)
         try:
             if self.action == "update":
-                state = run_update(InstallOptions(checkout_root=REPO_ROOT, reinstall=True))
+                state = run_update(InstallOptions(checkout_root=CHECKOUT_ROOT, reinstall=True))
                 log.update(
                     "\n".join(
                         [
@@ -796,10 +800,11 @@ def _launch_product_tui() -> int:
         return 1
 
     env = os.environ.copy()
-    pythonpath = str(REPO_ROOT)
-    if env.get("PYTHONPATH"):
-        pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
-    env["PYTHONPATH"] = pythonpath
+    if (CHECKOUT_ROOT / "pyproject.toml").exists():
+        pythonpath = str(CHECKOUT_ROOT)
+        if env.get("PYTHONPATH"):
+            pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
+        env["PYTHONPATH"] = pythonpath
     os.execvpe(capiforge_bin, [capiforge_bin, "tui"], env)
     return 1
 

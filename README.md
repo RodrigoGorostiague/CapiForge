@@ -15,9 +15,13 @@
 ## Module Layout
 
 - `storage/` contains the owner-node and coordinator SQLite schemas used to bootstrap local-first state.
+- `runtime/paths.py` resolves bundled share data (`/usr/share/capiforge` in apt installs, checkout fallback in dev).
 - `runtime/shared/` holds canonical IDs, mutation contracts, and surface error payloads shared by nodes and the coordinator.
 - `runtime/node/` contains local node persistence, deterministic entrypoint indexes, owner routing, and node MCP handlers.
 - `runtime/coordinator/` contains LAN enrollment, exclusive claim leases, routed mutation visibility, and coordinator MCP handlers.
+- `runtime/installer/` contains `capinstall` core logic, integration writers, and the Textual wizard.
+- `debian/` and `scripts/build-deb.sh` support local `.deb` builds and Launchpad PPA packaging.
+- `skills/` ships agent skills; apt installs copy them to `/usr/share/capiforge/skills/`.
 - `tests/e2e/` covers the review-facing multi-node topology: two nodes plus one thin coordinator.
 
 ## Bootstrap Defaults
@@ -26,9 +30,18 @@ V1 keeps the coordinator thin and non-authoritative. Each project has exactly on
 
 ## Owner-Local Bootstrap CLI (V1.1)
 
+Architecture and agent-coordination kickoff: [docs/architecture-v01.md](docs/architecture-v01.md)
+
 ### Install the canonical `capiforge` command
 
-Recommended Linux developer install from the repo root:
+Two supported install paths:
+
+| Path | Best for | Commands |
+|------|----------|----------|
+| **Developer checkout** | day-to-day repo work | `./capinstall` → `uv tool install --editable` |
+| **System package (PPA/apt)** | end users / stable binary | `apt install capiforge` → `capinstall` for MCP wiring |
+
+#### Developer install (recommended from repo root)
 
 ```bash
 ./capinstall
@@ -40,23 +53,29 @@ In an interactive terminal, `./capinstall` opens a **Textual wizard** with:
 - **Update** — refresh the installed binary and all registered integrations
 - **Uninstall** — remove the binary, MCP entries, and installer state
 - **Verify** — health check without changes
+- **Open CapiForge TUI** — launch `capiforge tui` when the binary is present
 
 CLI/automation mode:
 
 ```bash
-./capinstall install --cursor --opencode --non-interactive
-./capinstall update --non-interactive
-./capinstall uninstall --non-interactive
+./capinstall install --cursor --opencode
+./capinstall update
+./capinstall uninstall
 ./capinstall verify --json
 ./capinstall --no-tui-ui verify
 ```
 
-The installer verifies Python 3.11+, installs dependencies in an isolated tool environment (preferring `uv`, with `pipx` as a fallback), bootstraps the repo (`init` → `adopt`), and writes MCP integration config for the targets you select.
+The installer verifies Python 3.11+, installs into an isolated tool environment (preferring `uv`, with `pipx` as a fallback), bootstraps the repo (`init` → `adopt`), and writes MCP integration config for the targets you select.
+
+**Install modes** recorded in `~/.capiforge/installer-state.json`:
+
+- `uv` / `pipx` — editable checkout install (developer path)
+- `deb` — system package detected only when `/usr/share/capiforge` exists; `capinstall uninstall` removes integrations but leaves the apt package installed
 
 Integration paths:
 
-- **Cursor:** `~/.cursor/mcp.json` and `<repo>/.cursor/mcp.json`
-- **OpenCode:** `~/.config/opencode/opencode.json`
+- **Cursor:** `~/.cursor/mcp.json`, `<repo>/.cursor/mcp.json`, and `<repo>/.cursor/skills/` (automation skill copy)
+- **OpenCode:** `~/.config/opencode/opencode.json` plus a local skills tree under the config directory
 
 Installer state is stored in `~/.capiforge/installer-state.json` so update/uninstall can refresh or remove everything that was registered.
 
@@ -69,15 +88,42 @@ After pulling new changes:
 If `uv` is missing, bootstrap it explicitly:
 
 ```bash
-CAPIFORGE_INSTALL_UV=1 ./capinstall install --cursor --non-interactive
+CAPIFORGE_INSTALL_UV=1 ./capinstall install --cursor
 ```
 
 Manual editable install remains supported:
 
 ```bash
-python3 -m pip install -e ".[tui]"
+python3 -m pip install -e .
+capiforge --version
 capiforge mcp --help
+capiforge tui
 ```
+
+#### Install from PPA (Ubuntu/Debian)
+
+For system-wide installation via apt:
+
+```bash
+sudo add-apt-repository ppa:capiforge/stable
+sudo apt update
+sudo apt install capiforge
+capiforge --version
+capinstall
+```
+
+The apt package installs `/usr/bin/capiforge`, `/usr/bin/capinstall`, and share data under `/usr/share/capiforge/` (SQL schemas, skills, assets). Your project repository remains the `--repo-root` for bootstrap and MCP; run `capinstall` to wire Cursor/OpenCode integrations for that repo.
+
+Supported PPA baseline: **Ubuntu 24.04 (noble)** with `python3-textual` from Universe. Ubuntu 22.04 (jammy) may require a companion Textual package in the same PPA; see `debian/README.Debian`.
+
+Build a local `.deb` from source:
+
+```bash
+sudo apt install devscripts debhelper dh-python pybuild-plugin-pyproject python3-textual
+./scripts/build-deb.sh
+```
+
+Tag pushes (`v*`) also run the Debian build workflow in `.github/workflows/deb-build.yml`.
 
 Example MCP stdio configuration:
 
@@ -105,6 +151,16 @@ capiforge read --as-of 2026-06-19T13:30:00Z
 capiforge current
 capiforge tasks ready
 capiforge tasks claim --task-id tsk_123 --plan "Implement the requested change"
+capiforge audit create --title "Brief title" --content-file docs/audits/audit-v01-agent-coordination.md
+capiforge audit publish --audit-id aud_example
+capiforge tui
+```
+
+Lifecycle wrappers (same-project, audit-backed auto-create on miss):
+
+```bash
+capiforge tasks start --lifecycle-key lifecycle://example/work --plan "Start work"
+capiforge tasks finish --lifecycle-key lifecycle://example/work --outcome done --done-result "Shipped"
 ```
 
 The legacy bootstrap helper remains available as a compatibility shim:
@@ -167,9 +223,14 @@ capiforge mcp --help
 capiforge mcp serve --repo-root /path/to/repo --node-home /path/to/repo/.capiforge/node
 ```
 
-The stdio MCP surface also exposes `current_get`, which returns the same aggregate payload shape as `capiforge current` with optional `as_of` and `ready_limit` inputs.
-It also exposes `tasks_ready_get`, which returns the same payload shape as `capiforge tasks ready` with optional `as_of` and `limit` inputs.
-It also exposes `tasks_claim`, which returns the same payload shape as `capiforge tasks claim` with required `task_id` and `plan`, plus optional `lease_minutes`.
+The stdio MCP surface also exposes:
+
+- `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `workspace_get_current`, `sync_status`
+- `tasks_claim`, `tasks_claim_renew`, `tasks_release`, `tasks_transition`
+- `tasks_reconcile_start`, `tasks_reconcile_finish`
+- `audit_create_brief`, `audit_publish`
+
+`current_get` returns the same aggregate payload shape as `capiforge current`. `tasks_ready_get` matches `capiforge tasks ready`. `tasks_claim` matches `capiforge tasks claim`.
 
 Project-scoped authorization is now enforced before local entrypoint reads, indexed task reads, claims, and routed mutation proposal creation. Enrollment alone is not enough to inspect or act on arbitrary project IDs.
 
