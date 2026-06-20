@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 demo-runtime/
 .capiforge/
+.cursor/
 *.egg-info/
 build/
 dist/

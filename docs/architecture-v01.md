@@ -110,4 +110,10 @@ capiforge current
 capiforge tasks ready
 ```
 
-Load `AGENTS.md` and the relevant skill before coordinating work. Use `skills/capiforge-data-layer/SKILL.md` when you need persistence semantics.
+Load `AGENTS.md` and the relevant skill before coordinating work. Use `skills/capiforge-data-layer/SKILL.md` when you need persistence semantics. Use [docs/mvp.md](mvp.md) to verify MVP readiness.
+
+## Multi-agent notes
+
+- MCP assigns a distinct `session_id` per client (`clientInfo` hash).
+- Renew long claims with `tasks_claim_renew` every 3–4 minutes (default lease: 5 minutes).
+- Only one active claim per task; a second session receives `CLAIM_CONFLICT`.

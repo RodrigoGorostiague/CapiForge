@@ -30,7 +30,8 @@ V1 keeps the coordinator thin and non-authoritative. Each project has exactly on
 
 ## Owner-Local Bootstrap CLI (V1.1)
 
-Architecture and agent-coordination kickoff: [docs/architecture-v01.md](docs/architecture-v01.md)
+Architecture and agent-coordination kickoff: [docs/architecture-v01.md](docs/architecture-v01.md)  
+MVP acceptance checklist: [docs/mvp.md](docs/mvp.md)
 
 ### Install the canonical `capiforge` command
 
@@ -155,6 +156,18 @@ capiforge audit create --title "Brief title" --content-file docs/audits/audit-v0
 capiforge audit publish --audit-id aud_example
 capiforge tui
 ```
+
+### When the ready queue is empty
+
+`capiforge tasks ready` may return **count: 0** when every task is claimed, in progress, or already done. That is normal — not a bootstrap failure.
+
+1. Inspect state: `capiforge current` (check `queue_counts` for `blocked`, `done`, `expired_claim`).
+2. If work is in flight, finish or release claims before expecting new ready items.
+3. To add new work from an audit:
+   - `capiforge audit create --title "..." --content-file path/to/audit.md`
+   - `capiforge audit publish --audit-id aud_...`
+   - Seed ready tasks (project script) or start lifecycle work: `capiforge tasks start --lifecycle-key audit/v0.2/example --plan "..."`
+4. See [docs/mvp.md](docs/mvp.md) for the full agent recovery playbook.
 
 Lifecycle wrappers (same-project, audit-backed auto-create on miss):
 

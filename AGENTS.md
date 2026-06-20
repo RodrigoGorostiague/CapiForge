@@ -12,6 +12,7 @@
 | Work already exists in the ready queue | `capiforge-pickup-task` → `capiforge-start-task` → `capiforge-close-task` |
 | New justified work keyed by `lifecycle_key` | `capiforge-record-completed-work` or manual `audit_create_brief` → `audit_publish` → `tasks_reconcile_start` → `tasks_reconcile_finish` |
 | Need DB/state semantics before acting | `capiforge-data-layer` |
+| Verify MVP readiness or recover from empty queue | [docs/mvp.md](docs/mvp.md) |
 
 ## Project Skills
 

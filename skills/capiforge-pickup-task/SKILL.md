@@ -25,7 +25,7 @@ Use when an orchestrator needs the next actionable CapiForge task without making
 
 | Situation | Action |
 | --- | --- |
-| No ready tasks | Return `status: no_ready_tasks` with current project context and queue count. |
+| No ready tasks | Return `status: no_ready_tasks` with current project context, queue counts, and **next steps** (see below). Do not claim blindly. |
 | Exactly one ready task | Claim it unless the caller asked for inspection only. |
 | Multiple ready tasks with explicit `task_id` or policy | Apply that selection rule exactly. |
 | Multiple ready tasks with no policy | Use the deterministic default policy: select the first task in `tasks_ready_get.data.tasks` order and say so in the summary. |
@@ -34,7 +34,11 @@ Use when an orchestrator needs the next actionable CapiForge task without making
 ## Execution Steps
 
 1. Call `current_get` first to capture bootstrap state, adopted project context, and the current ready-task signal.
-2. If the current payload already shows no ready tasks, stop and return a concise operational summary.
+2. If the current payload already shows no ready tasks, stop and return a concise operational summary with `status: no_ready_tasks` and these **next steps**:
+   - Check `entrypoint.queue_counts` and `tasks_list_by_index` for `blocked`, `done`, or `expired_claim`.
+   - If all work is `in_progress` or `claimed`, wait or ask the operator to finish/release tasks.
+   - To create new work: publish an audit (`audit_create_brief` → `audit_publish`) and seed or reconcile tasks with `tasks_reconcile_start` and a stable `lifecycle_key`.
+   - Point the operator to `docs/mvp.md` for the full empty-queue playbook.
 3. Call `tasks_ready_get` with a bounded limit and inspect the returned queue.
 4. Resolve task selection in this order: explicit `task_id`, explicit caller policy, default first-in-queue policy.
 5. Build a one-sentence claim plan from the selected task's visible title or summary. Keep it specific and operational.
@@ -54,5 +58,6 @@ Return a concise operational summary with:
 
 ## References
 
+- `docs/mvp.md`
 - `README.md`
 - `contracts/mcp-surface.md`

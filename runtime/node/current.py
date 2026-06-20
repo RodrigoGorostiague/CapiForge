@@ -634,6 +634,7 @@ def tasks_reconcile_start(
             "claim_id": claim_id,
             "state": refreshed_task["state"],
             "lifecycle_key": resolved_lifecycle_key,
+            "origin_audit_id": refreshed_task["origin_audit_id"],
             "created_task": created_task,
             "lease_started_at": lease_started_at,
             "lease_expires_at": lease_expires_at,
