@@ -13,7 +13,7 @@ from runtime.web.context import WebContext
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8741
-DEFAULT_REFRESH_SECONDS = 15
+DEFAULT_REFRESH_SECONDS = 0
 
 
 def build_parser(*, prog: str = "capiforge web") -> argparse.ArgumentParser:
@@ -29,7 +29,12 @@ def build_parser(*, prog: str = "capiforge web") -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_REFRESH_SECONDS,
         choices=(0, 15, 30, 60),
-        help="Auto-refresh interval in seconds (0=off)",
+        help="Polling fallback interval in seconds for sync verification (0=off; realtime is primary)",
+    )
+    parser.add_argument(
+        "--no-realtime",
+        action="store_true",
+        help="Disable SSE realtime updates (useful for tests/CI)",
     )
     return parser
 
@@ -52,6 +57,7 @@ def main(argv: Sequence[str] | None = None, *, prog: str = "capiforge web") -> i
         node_home=node_home,
         as_of=args.as_of,
         refresh_seconds=args.refresh,
+        realtime_enabled=not args.no_realtime,
     )
     app = create_app(ctx)
     url = f"http://{args.host}:{args.port}/"

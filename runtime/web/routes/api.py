@@ -7,11 +7,12 @@ from pathlib import Path
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from runtime.tui.actions import WEB_AGENT_ID, WEB_SESSION_ID, claim_task, release_task, transition_task, update_task_attribute
+from runtime.tui.actions import WEB_AGENT_ID, WEB_SESSION_ID, claim_task, release_task, transition_task, update_task_attribute, upsert_project_page
 from runtime.web.adopt_folder import adopt_folder_as_project
-from runtime.web.context import load_snapshot
+from runtime.web.context import load_snapshot, nav_from_query
 from runtime.web.folder_picker import pick_folder_native
 from runtime.web.project_registry import content_repo_for_project
+from runtime.web.sync_status import build_coord_meta
 from runtime.web.tasks_view import build_tasks_view_context, render_template, render_tasks_panel_bundle
 
 router = APIRouter()
@@ -67,6 +68,51 @@ def _htmx_action_response(
 async def tasks_panel_partial(request: Request) -> HTMLResponse:
     panel_html, refresh_html = render_tasks_panel_bundle(request)
     return HTMLResponse(content=panel_html + refresh_html)
+
+
+@router.get("/partials/sync-status", response_class=HTMLResponse)
+async def sync_status_partial(request: Request) -> HTMLResponse:
+    ctx = request.state.web_ctx
+    snapshot = load_snapshot(ctx)
+    project_id = request.query_params.get("project_id")
+    project = None
+    if project_id:
+        for workspace in snapshot.workspaces:
+            for candidate in workspace.projects:
+                if candidate.project_id == project_id:
+                    project = candidate
+                    break
+            if project is not None:
+                break
+    if project is None:
+        nav = nav_from_query(
+            snapshot,
+            workspace_id=request.query_params.get("workspace_id"),
+            project_id=project_id,
+            route="home",
+            has_expanded_ws=False,
+            has_expanded_proj=False,
+        )
+        from runtime.tui.data import resolve_nav_selection
+
+        _, project = resolve_nav_selection(snapshot, nav)
+
+    sync_coord = None
+    if project is not None:
+        sync_coord = build_coord_meta(
+            degraded=project.sync_degraded,
+            pending_routes=project.sync_pending_routes,
+        )
+    html = render_template(
+        request,
+        "partials/sync_status.html",
+        {
+            "sync_coord": sync_coord,
+            "refresh_seconds": ctx.refresh_seconds,
+            "realtime_enabled": ctx.realtime_enabled,
+        },
+    )
+    return HTMLResponse(content=html)
 
 
 @router.post("/tasks/update-field", response_class=HTMLResponse, response_model=None)
@@ -303,3 +349,31 @@ async def adopt_folder_project(
         )
         return HTMLResponse(content=toast_html + f'<div id="add-project-panel" hx-swap-oob="innerHTML">{form_html}</div>')
     return RedirectResponse(url=f"/?msg={message}", status_code=303)
+
+
+@router.post("/project-page/save", response_class=HTMLResponse, response_model=None)
+async def save_project_page(
+    request: Request,
+    project_id: str = Form(...),
+    workspace_id: str = Form(""),
+    page_type: str = Form("purpose"),
+    title: str = Form(""),
+    content: str = Form(""),
+) -> RedirectResponse:
+    ctx = request.state.web_ctx
+    repo_root, node_home = _content_paths(request, project_id)
+    result = upsert_project_page(
+        repo_root=repo_root,
+        node_home=node_home,
+        project_id=project_id,
+        page_type=page_type,
+        title=title,
+        content=content,
+    )
+    params = {
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "msg": result.message if result.ok else f"Error: {result.message}",
+    }
+    redirect_url = f"/?{urlencode(params)}" if result.ok else f"/project-page?{urlencode({**params, 'page_type': page_type})}"
+    return RedirectResponse(url=redirect_url, status_code=303)

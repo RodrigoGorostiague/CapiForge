@@ -709,13 +709,22 @@ html.splash-seen #app-splash {
 }
 
 .sync-dot--ok { background: var(--cf-success); }
+.sync-dot--live { background: var(--cf-success); }
+.sync-dot--connecting { background: #8b949e; animation: sync-pulse 1.2s ease-in-out infinite; }
+.sync-dot--offline { background: #8b949e; }
 .sync-dot--degraded { background: #c29343; animation: sync-pulse 2s ease-in-out infinite; }
-.sync-dot--pending { background: #c29343; animation: sync-pulse 1.4s ease-in-out infinite; }
+.sync-dot--pending { background: #c29343; animation: sync-pulse 1.1s ease-in-out infinite; }
 .sync-dot--stale { background: var(--cf-error); }
 .sync-dot--refreshing { background: var(--cf-cta); animation: sync-pulse 0.9s ease-in-out infinite; }
+.sync-dot--updating { background: var(--cf-cta); animation: sync-pulse 0.9s ease-in-out infinite; }
 
 .sync-status.is-refreshing .sync-label {
   color: var(--cf-cta);
+  font-weight: 600;
+}
+
+.sync-status.is-stale .sync-label {
+  color: var(--cf-error);
   font-weight: 600;
 }
 

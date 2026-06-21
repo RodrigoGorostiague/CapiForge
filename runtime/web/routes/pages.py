@@ -7,8 +7,8 @@ from runtime.tui.data import resolve_nav_selection
 from runtime.tui.view import build_page_header, resolve_selected_audit, tasks_for_audit
 from runtime.web.context import ViewRoute, load_snapshot, nav_from_query, sidebar_nav
 from runtime.web.markdown import render_markdown
-from runtime.web.sync_status import build_sync_indicator
-from runtime.web.tasks_view import build_tasks_view_context
+from runtime.web.sync_status import build_coord_meta, build_sync_indicator
+from runtime.web.tasks_view import build_tasks_view_context, render_template
 
 router = APIRouter()
 
@@ -32,11 +32,16 @@ def _common_context(request: Request, route: ViewRoute, **query_overrides) -> di
     workspace, project = resolve_nav_selection(snapshot, nav)
     header = build_page_header(snapshot, nav)
     sync_indicator = None
+    sync_coord = None
     if project is not None:
         sync_indicator = build_sync_indicator(
             degraded=project.sync_degraded,
             pending_routes=project.sync_pending_routes,
             refresh_seconds=ctx.refresh_seconds,
+        )
+        sync_coord = build_coord_meta(
+            degraded=project.sync_degraded,
+            pending_routes=project.sync_pending_routes,
         )
     return {
         "request": request,
@@ -47,8 +52,10 @@ def _common_context(request: Request, route: ViewRoute, **query_overrides) -> di
         "header": header,
         "sidebar_items": sidebar_nav(snapshot, nav, request=request, route=route),
         "refresh_seconds": ctx.refresh_seconds,
+        "realtime_enabled": ctx.realtime_enabled,
         "route": route,
         "sync_indicator": sync_indicator,
+        "sync_coord": sync_coord,
         **query_overrides,
     }
 
@@ -65,6 +72,19 @@ async def home_page(request: Request) -> HTMLResponse:
                 count = sum(1 for t in project.all_tasks if t.state == key)
             if count:
                 queue_items.append((key, count))
+        context["purpose_page"] = next((p for p in project.project_pages if p.page_type == "purpose"), None)
+        context["architecture_page"] = next((p for p in project.project_pages if p.page_type == "architecture"), None)
+        context["purpose_html"] = render_markdown(context["purpose_page"].content) if context["purpose_page"] and context["purpose_page"].content else ""
+        context["architecture_html"] = (
+            render_markdown(context["architecture_page"].content)
+            if context["architecture_page"] and context["architecture_page"].content
+            else ""
+        )
+    else:
+        context["purpose_page"] = None
+        context["architecture_page"] = None
+        context["purpose_html"] = ""
+        context["architecture_html"] = ""
     context["queue_items"] = queue_items
     context["recent_tasks"] = (project.all_tasks[:3] if project else ())
     return request.state.templates.TemplateResponse(request, "home.html", context)
@@ -97,3 +117,20 @@ async def docs_page(request: Request) -> HTMLResponse:
         context["audit_html"] = ""
         context["linked_tasks"] = ()
     return request.state.templates.TemplateResponse(request, "docs.html", context)
+
+
+@router.get("/project-page", response_class=HTMLResponse)
+async def project_page_editor(request: Request) -> HTMLResponse:
+    context = _common_context(request, "project_page")
+    project = context["project"]
+    page_type = request.query_params.get("page_type", "purpose")
+    if page_type not in {"purpose", "architecture", "custom"}:
+        page_type = "purpose"
+    selected_page = None
+    if project:
+        selected_page = next((p for p in project.project_pages if p.page_type == page_type), None)
+    context["page_type"] = page_type
+    context["selected_page"] = selected_page
+    context["page_content"] = selected_page.content if selected_page else ""
+    context["page_title"] = selected_page.title if selected_page else {"purpose": "Purpose", "architecture": "Architecture"}.get(page_type, "Custom page")
+    return request.state.templates.TemplateResponse(request, "project_page_edit.html", context)

@@ -26,7 +26,7 @@
   <link rel="stylesheet" href="/static/notion.css">
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 </head>
-<body>
+<body{% if realtime_enabled %} data-realtime="1"{% endif %}>
   <div id="app-splash" class="app-splash" role="status" aria-live="polite" aria-label="Cargando CapiForge">
     <img class="app-splash-logo" src="{{ brand_logo_url }}" alt="" decoding="async">
     <div class="app-splash-brand">
@@ -45,14 +45,26 @@
           <img class="sidebar-brand-icon" src="{{ brand_logo_url }}" alt="" width="28" height="28" decoding="async">
           <span class="sidebar-brand-name">CapiForge</span>
         </div>
-        {% if sync_indicator %}
+        {% if sync_indicator and sync_coord %}
           <div id="app-sync-status"
                class="sync-status sync-status--brand"
-               data-base-state="{{ sync_indicator.state }}"
-               data-base-label="{{ sync_indicator.label }}"
-               title="{{ sync_indicator.label }}{% if refresh_seconds %} · auto {{ refresh_seconds }}s{% endif %}">
-            <span class="sync-dot sync-dot--{{ sync_indicator.state }}"></span>
-            <span class="sync-label">{{ sync_indicator.label }}</span>
+               role="status"
+               aria-live="polite"
+               data-realtime="{{ '1' if realtime_enabled else '0' }}"
+               data-fallback-seconds="{{ refresh_seconds }}"
+               data-coord-state="{{ sync_coord.coord_state }}"
+               data-coord-label="{{ sync_coord.coord_label }}"
+               title="{{ sync_coord.coord_label }}">
+            {% if realtime_enabled %}
+              <span class="sync-dot sync-dot--connecting"></span>
+              <span class="sync-label">Conectando</span>
+            {% elif refresh_seconds %}
+              <span class="sync-dot sync-dot--live"></span>
+              <span class="sync-label">Al día</span>
+            {% else %}
+              <span class="sync-dot sync-dot--offline"></span>
+              <span class="sync-label">Sin tiempo real</span>
+            {% endif %}
           </div>
         {% elif snapshot.sync_summary %}
           <div class="sync-status sync-status--brand" title="{{ snapshot.sync_summary }}">
@@ -99,6 +111,14 @@
   <script src="/static/splash.js"></script>
   <script src="/static/sidebar.js"></script>
   <script src="/static/sync-indicator.js"></script>
+  {% if realtime_enabled %}
+  <script id="realtime-config" type="application/json">{{ {
+    "route": route,
+    "project_id": project.project_id if project else "",
+    "panel_url": panel_url if panel_url is defined else ""
+  } | tojson }}</script>
+  <script src="/static/realtime.js"></script>
+  {% endif %}
   <script src="/static/pill-picker.js"></script>
   <script src="/static/pick-folder.js"></script>
 </body>

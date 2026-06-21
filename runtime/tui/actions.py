@@ -50,7 +50,8 @@ def _with_surface(
             state = bootstrap._status_unlocked()
             if state.state == "uninitialized":
                 state = bootstrap._open_or_init_unlocked()
-            store = NodeStore.from_file(state.node_db_path)
+            node_db_path = state.node_db_path
+            store = NodeStore.from_file(node_db_path)
             try:
                 actor = _build_local_actor(store, state, agent_id=agent_id, session_id=session_id)
                 surface = NodeMCPSurface(
@@ -62,6 +63,9 @@ def _with_surface(
                 result = callback(bootstrap, store, surface, actor, resolved_as_of)
                 if result.ok:
                     store.db.commit()
+                    from runtime.events.notify import notify_local_write
+
+                    notify_local_write(node_db_path)
                 return result
             finally:
                 store.close()
@@ -330,6 +334,46 @@ def update_task_attribute(
         repo_root=repo_root,
         node_home=node_home,
         command="tui_update_task_attribute",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+
+
+def upsert_project_page(
+    *,
+    repo_root: str | Path,
+    node_home: str | Path | None,
+    project_id: str,
+    page_type: str,
+    title: str,
+    content: str,
+    agent_id: str = WEB_AGENT_ID,
+    session_id: str = WEB_SESSION_ID,
+) -> ActionResult:
+    if page_type not in {"purpose", "architecture", "custom"}:
+        return ActionResult(ok=False, message="Invalid page type.")
+
+    def _callback(_bootstrap, store, _surface, _actor, as_of) -> ActionResult:
+        project = store.get_project(project_id)
+        if not project:
+            return ActionResult(ok=False, message="Project not found.")
+        page_id = canonical_id("page", project_id, page_type)
+        store.upsert_project_page(
+            page_id=page_id,
+            project_id=project_id,
+            page_type=page_type,
+            title=title.strip() or page_type.title(),
+            content=content,
+            updated_at=as_of,
+        )
+        store.db.commit()
+        return ActionResult(ok=True, message="Project page saved.")
+
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command="web_upsert_project_page",
         callback=_callback,
         agent_id=agent_id,
         session_id=session_id,

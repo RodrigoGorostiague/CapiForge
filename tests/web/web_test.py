@@ -4,21 +4,22 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from unittest.mock import patch
-
 try:
     from fastapi.testclient import TestClient
 
     from runtime.node.bootstrap import NodeBootstrap
     from runtime.node.store import NodeStore
     from runtime.web.app import create_app
-    from runtime.web.cli import DEFAULT_HOST, DEFAULT_PORT, build_parser, main as web_main
+    from runtime.web.cli import DEFAULT_HOST, DEFAULT_PORT, DEFAULT_REFRESH_SECONDS, build_parser, main as web_main
     from runtime.web.context import WebContext
     from runtime.web.markdown import render_markdown
 except ModuleNotFoundError:
     TestClient = None
     create_app = None
     web_main = None
+    render_markdown = None
+
+_WEB_DEPS_INSTALLED = TestClient is not None
 
 
 @unittest.skipIf(TestClient is None, "Web dependencies are not installed")
@@ -27,7 +28,9 @@ class WebCLITest(unittest.TestCase):
         args = build_parser().parse_args([])
         self.assertEqual(args.host, DEFAULT_HOST)
         self.assertEqual(args.port, DEFAULT_PORT)
+        self.assertEqual(args.refresh, DEFAULT_REFRESH_SECONDS)
         self.assertFalse(args.no_open)
+        self.assertFalse(args.no_realtime)
 
     def test_main_reports_missing_dependencies(self) -> None:
         stderr = StringIO()
@@ -64,8 +67,54 @@ class WebAppTest(unittest.TestCase):
             "Ship the web UI",
         )
         store.db.commit()
-        ctx = WebContext(repo_root=repo_root, node_home=None, as_of="2026-06-20T12:00:00Z", refresh_seconds=0)
-        return TestClient(create_app(ctx)), repo_root
+        ctx = WebContext(
+            repo_root=repo_root,
+            node_home=None,
+            as_of="2026-06-20T12:00:00Z",
+            refresh_seconds=0,
+            realtime_enabled=True,
+        )
+        client = TestClient(create_app(ctx))
+        client.__enter__()
+        self.addCleanup(client.__exit__, None, None, None)
+        return client, repo_root
+
+    def _adopted_client_with_ctx(self, **overrides) -> tuple[TestClient, Path]:
+        tempdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: Path(tempdir).exists() and __import__("shutil").rmtree(tempdir, ignore_errors=True))
+        repo_root = Path(tempdir) / "repo"
+        repo_root.mkdir(parents=True)
+        bootstrap = NodeBootstrap(repo_root=repo_root)
+        bootstrap.open_or_init()
+        adopted = bootstrap.adopt_repo()
+        store = NodeStore.from_file(adopted.node_db_path)
+        self.addCleanup(store.close)
+        store.create_audit("aud_web", adopted.adopted_project["project_id"], "published", "Web Audit", "## Scope\n\nHello **world**.")
+        store.create_task(
+            "tsk_web",
+            adopted.adopted_project["project_id"],
+            "aud_web",
+            "ready",
+            "high",
+            "medium",
+            "low",
+            "feature",
+            "Ship the web UI",
+        )
+        store.db.commit()
+        defaults = {
+            "repo_root": repo_root,
+            "node_home": None,
+            "as_of": "2026-06-20T12:00:00Z",
+            "refresh_seconds": 0,
+            "realtime_enabled": True,
+        }
+        defaults.update(overrides)
+        ctx = WebContext(**defaults)
+        client = TestClient(create_app(ctx))
+        client.__enter__()
+        self.addCleanup(client.__exit__, None, None, None)
+        return client, repo_root
 
     def test_home_page_renders(self) -> None:
         client, _repo = self._adopted_client()
@@ -243,20 +292,66 @@ class WebAppTest(unittest.TestCase):
         self.assertIn("Web Audit", response.text)
         self.assertIn("<strong>world</strong>", response.text)
 
+    def test_realtime_assets_on_pages(self) -> None:
+        client, _repo = self._adopted_client()
+        for path in ("/", "/tasks", "/docs"):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("realtime-config", response.text)
+            self.assertIn("/static/realtime.js", response.text)
+
+    def test_no_realtime_disables_sse_assets(self) -> None:
+        client, _repo = self._adopted_client_with_ctx(realtime_enabled=False)
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("realtime-config", response.text)
+        self.assertNotIn("/static/realtime.js", response.text)
+        stream = client.get("/api/events/stream")
+        self.assertEqual(stream.status_code, 404)
+
+    def test_sse_stream_available_when_realtime_enabled(self) -> None:
+        client, _repo = self._adopted_client()
+        self.assertIsNotNone(client.app.state.event_bus)
+
+    def test_refresh_fallback_triggers_remain_when_enabled(self) -> None:
+        client, _repo = self._adopted_client_with_ctx(refresh_seconds=15)
+        home = client.get("/")
+        self.assertIn("every 15s", home.text)
+        tasks = client.get("/tasks")
+        self.assertIn("every 15s", tasks.text)
+
+    def test_sync_status_partial_updates_coord_meta(self) -> None:
+        client, _repo = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.get(f"/api/partials/sync-status?project_id={project_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sync-coord-meta", response.text)
+        self.assertIn("data-coord-label", response.text)
+        self.assertIn("Coordinador:", response.text)
+
+    def test_freshness_indicator_starts_connecting_with_realtime(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/tasks")
+        self.assertIn("sync-dot--connecting", response.text)
+        self.assertIn("Conectando", response.text)
+        self.assertIn("data-coord-label", response.text)
+
     def test_uninitialized_repo_shows_notice(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             repo_root = Path(tempdir) / "empty"
             repo_root.mkdir()
-            ctx = WebContext(repo_root=repo_root, node_home=None, as_of=None, refresh_seconds=0)
+            ctx = WebContext(repo_root=repo_root, node_home=None, as_of=None, refresh_seconds=0, realtime_enabled=False)
             client = TestClient(create_app(ctx))
+            client.__enter__()
+            self.addCleanup(client.__exit__, None, None, None)
             response = client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("bootstrap", response.text.lower())
 
 
+@unittest.skipIf(not _WEB_DEPS_INSTALLED, "Web dependencies are not installed")
 class WebMarkdownTest(unittest.TestCase):
     def test_render_markdown_disables_raw_html(self) -> None:
-        if render_markdown is None:
-            self.skipTest("Web dependencies are not installed")
         html = render_markdown("**bold**")
         self.assertIn("<strong>bold</strong>", html)

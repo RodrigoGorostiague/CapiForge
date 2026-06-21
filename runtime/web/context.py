@@ -10,7 +10,7 @@ from fastapi import Request
 from runtime.tui.data import AppSnapshot, NavState, ViewName, default_nav_state, load_home_snapshot
 from runtime.tui.nav import build_nav_tree
 
-ViewRoute = Literal["home", "tasks", "docs"]
+ViewRoute = Literal["home", "tasks", "docs", "project_page"]
 
 PRESERVED_QUERY_KEYS = (
     "expanded_ws",
@@ -30,6 +30,7 @@ class WebContext:
     node_home: Path | None
     as_of: str | None
     refresh_seconds: int
+    realtime_enabled: bool = True
 
 
 def load_snapshot(ctx: WebContext) -> AppSnapshot:

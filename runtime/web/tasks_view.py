@@ -117,6 +117,7 @@ def build_tasks_view_context(
         "sort_column": resolved_sort,
         "sort_dir": resolved_sort_dir,
         "refresh_seconds": ctx.refresh_seconds,
+        "realtime_enabled": ctx.realtime_enabled,
         "filter_options": [],
         "sort_columns": [],
         "tasks": (),

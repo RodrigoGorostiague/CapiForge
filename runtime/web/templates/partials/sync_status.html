@@ -1,0 +1,7 @@
+{% if sync_coord %}
+<div id="sync-coord-meta"
+     hidden
+     hx-swap-oob="true"
+     data-coord-state="{{ sync_coord.coord_state }}"
+     data-coord-label="{{ sync_coord.coord_label }}"></div>
+{% endif %}

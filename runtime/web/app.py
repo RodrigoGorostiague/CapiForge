@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from runtime.web.context import WebContext
+from runtime.events.change_watcher import ChangeWatcher
+from runtime.events.db_paths import resolve_web_db_paths
+from runtime.events.notify import set_event_bus
 from runtime.web.brand import brand_icons_dir, brand_logo_url
-from runtime.web.routes import api, pages
+from runtime.web.context import WebContext
+from runtime.web.routes import api, events, pages
 from runtime.web.task_fields import TASK_FIELD_OPTIONS
 from runtime.web.theme import (
     css_variables_block,
@@ -27,7 +32,35 @@ def _web_root() -> Path:
 
 
 def create_app(ctx: WebContext) -> FastAPI:
-    app = FastAPI(title="CapiForge", docs_url=None, redoc_url=None)
+    watcher: ChangeWatcher | None = None
+    watcher_task: asyncio.Task | None = None
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        nonlocal watcher, watcher_task
+        if ctx.realtime_enabled:
+            watcher = ChangeWatcher()
+            set_event_bus(watcher.bus)
+            db_paths = resolve_web_db_paths(ctx.repo_root, ctx.node_home)
+            watcher_task = asyncio.create_task(watcher.run(db_paths))
+            app.state.event_bus = watcher.bus
+            app.state.change_watcher = watcher
+        else:
+            set_event_bus(None)
+            app.state.event_bus = None
+            app.state.change_watcher = None
+        yield
+        if watcher is not None:
+            watcher.stop()
+        if watcher_task is not None:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
+        set_event_bus(None)
+
+    app = FastAPI(title="CapiForge", docs_url=None, redoc_url=None, lifespan=lifespan)
     templates = Jinja2Templates(directory=str(_web_root() / "templates"))
     static_dir = _web_root() / "static"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -57,4 +90,5 @@ def create_app(ctx: WebContext) -> FastAPI:
 
     app.include_router(pages.router)
     app.include_router(api.router, prefix="/api")
+    app.include_router(events.router, prefix="/api")
     return app

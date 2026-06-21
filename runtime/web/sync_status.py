@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from runtime.tui.view import SYNC_LIGHT_LABELS, SyncLightState, resolve_sync_light_state
 
 
@@ -21,4 +19,21 @@ def build_sync_indicator(
     return {
         "state": state,
         "label": SYNC_LIGHT_LABELS[state],
+    }
+
+
+def build_coord_meta(*, degraded: bool = False, pending_routes: int = 0) -> dict[str, str]:
+    if pending_routes > 0:
+        return {
+            "coord_state": "pending",
+            "coord_label": f"Coordinador: {pending_routes} rutas pendientes",
+        }
+    if degraded:
+        return {
+            "coord_state": "degraded",
+            "coord_label": "Coordinador: local-only",
+        }
+    return {
+        "coord_state": "ok",
+        "coord_label": "Coordinador: conectado",
     }
