@@ -776,16 +776,21 @@ def tasks_reconcile_finish(
 
     def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
         project_id = state.adopted_project["project_id"]
-        payload = _reconcile_finish_core(
-            store=store,
-            surface=surface,
-            actor=actor,
-            project_id=project_id,
-            resolved_as_of=resolved_as_of,
-            lifecycle_key=resolved_lifecycle_key,
-            outcome=resolved_outcome,
-            finish_metadata=finish_metadata,
-        )
+        try:
+            payload = _reconcile_finish_core(
+                store=store,
+                surface=surface,
+                actor=actor,
+                project_id=project_id,
+                resolved_as_of=resolved_as_of,
+                lifecycle_key=resolved_lifecycle_key,
+                outcome=resolved_outcome,
+                finish_metadata=finish_metadata,
+            )
+        except SurfaceError:
+            # Claim expiry sync may revert in_progress tasks to ready before finish rejects.
+            store.db.commit()
+            raise
         store.db.commit()
         return {
             "bootstrap_state": state.state,
