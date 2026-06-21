@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 from fastapi import Request
 
 from runtime.tui.data import NavState, count_tasks_by_filter, filter_tasks, resolve_nav_selection
+from runtime.tui.task_fields import TASK_FIELD_OPTIONS
 from runtime.tui.view import TASK_FILTER_OPTIONS, TASK_SORTABLE_COLUMNS, sort_tasks_for_view
 from runtime.web.context import load_snapshot, nav_expansion_params, nav_from_query
 from runtime.web.helpers import find_audit, paginate_tasks
@@ -261,6 +262,12 @@ def build_tasks_view_context(
         "selected_audit": find_audit(project.audits, selected.origin_audit_id) if selected else None,
         "tasks_page": tasks_page,
         "panel_url": partial_panel_url(**panel_params),
+        "priority_options": TASK_FIELD_OPTIONS["priority"],
+        "task_type_options": TASK_FIELD_OPTIONS["task_type"],
+        "initial_state_options": ("proposed", "ready"),
+        "selected_priority": "medium",
+        "selected_task_type": "feature",
+        "selected_initial_state": "ready",
     }
 
 

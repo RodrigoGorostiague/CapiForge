@@ -15,6 +15,9 @@ from runtime.node.current import (
     audit_create_brief,
     audit_publish,
     claim_ready_task,
+    milestone_publish,
+    project_page_get,
+    project_page_upsert,
     read_current,
     read_ready_tasks,
     release_task,
@@ -29,10 +32,10 @@ from runtime.node.router import NodeRouter
 from runtime.node.store import NodeStore
 from runtime.shared.errors import SurfaceError
 from runtime.shared.ids import ActorIdentity
+from runtime.version import __version__ as SERVER_VERSION
 
 PROTOCOL_VERSION = "2025-03-26"
 SERVER_NAME = "capiforge"
-SERVER_VERSION = "0.1.0"
 LOCAL_AGENT_ID = "capiforge-mcp-server"
 LOCAL_SESSION_ID = "local-stdio-session"
 
@@ -473,6 +476,95 @@ def _tasks_reconcile_finish(options: ServerOptions, arguments: dict[str, Any], a
     }
 
 
+def _milestone_publish(options: ServerOptions, arguments: dict[str, Any], actor_context: McpActorContext) -> dict[str, Any]:
+    title = arguments.get("title")
+    content = arguments.get("content")
+    audit_id = arguments.get("audit_id")
+    as_of = arguments.get("as_of")
+    lifecycle = arguments.get("lifecycle")
+    if title is not None and (not isinstance(title, str) or not title.strip()):
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires title to be a non-empty string when provided")
+    if content is not None and (not isinstance(content, str) or not content.strip()):
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires content to be a non-empty string when provided")
+    if audit_id is not None and (not isinstance(audit_id, str) or not audit_id.strip()):
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires audit_id to be a non-empty string when provided")
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires as_of to be a non-empty string when provided")
+    if lifecycle is not None and not isinstance(lifecycle, dict):
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires lifecycle to be an object when provided")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "accepted",
+        "data": milestone_publish(
+            bootstrap,
+            title=title if isinstance(title, str) else None,
+            content=content if isinstance(content, str) else None,
+            audit_id=audit_id if isinstance(audit_id, str) else None,
+            as_of=as_of,
+            lifecycle=lifecycle,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=actor_context.agent_id,
+            session_id=actor_context.session_id,
+            command="milestone_publish",
+        ),
+    }
+
+
+def _project_page_get(options: ServerOptions, arguments: dict[str, Any], actor_context: McpActorContext) -> dict[str, Any]:
+    page_type = arguments.get("page_type")
+    as_of = arguments.get("as_of")
+    if not isinstance(page_type, str) or not page_type:
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_get requires page_type to be a non-empty string")
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_get requires as_of to be a non-empty string when provided")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "ok",
+        "data": project_page_get(
+            bootstrap,
+            page_type=page_type,
+            as_of=as_of,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=actor_context.agent_id,
+            session_id=actor_context.session_id,
+            command="project_page_get",
+        ),
+    }
+
+
+def _project_page_upsert(options: ServerOptions, arguments: dict[str, Any], actor_context: McpActorContext) -> dict[str, Any]:
+    page_type = arguments.get("page_type")
+    title = arguments.get("title")
+    content = arguments.get("content")
+    as_of = arguments.get("as_of")
+    if not isinstance(page_type, str) or not page_type:
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_upsert requires page_type to be a non-empty string")
+    if not isinstance(title, str) or not title:
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_upsert requires title to be a non-empty string")
+    if not isinstance(content, str):
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_upsert requires content to be a string")
+    if as_of is not None and (not isinstance(as_of, str) or not as_of):
+        raise SurfaceError("INVALID_ARGUMENTS", "project_page_upsert requires as_of to be a non-empty string when provided")
+    bootstrap = _bootstrap(options)
+    return {
+        "status": "accepted",
+        "data": project_page_upsert(
+            bootstrap,
+            page_type=page_type,
+            title=title,
+            content=content,
+            as_of=as_of,
+            lock_timeout_seconds=options.lock_timeout_seconds,
+            recover_stale_lock=options.recover_stale_lock,
+            agent_id=actor_context.agent_id,
+            session_id=actor_context.session_id,
+            command="project_page_upsert",
+        ),
+    }
+
+
 def _tasks_transition(options: ServerOptions, arguments: dict[str, Any], actor_context: McpActorContext) -> dict[str, Any]:
     task_id = arguments.get("task_id")
     requested_state = arguments.get("requested_state")
@@ -790,6 +882,59 @@ TOOLS: dict[str, dict[str, Any]] = {
             "additionalProperties": False,
         },
         "handler": _tasks_reconcile_finish,
+    },
+    "milestone_publish": {
+        "description": "Publish a milestone in one call: create and publish a brief audit, optionally reconcile lifecycle work to a terminal state.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "content": {"type": "string"},
+                "audit_id": {
+                    "type": "string",
+                    "description": "Publish an existing draft audit instead of creating a new brief.",
+                },
+                "as_of": {
+                    "type": "string",
+                    "description": "Optional deterministic timestamp used for audit ID generation and claim evaluation.",
+                },
+                "lifecycle": {
+                    "type": "object",
+                    "description": "Optional lifecycle reconcile start+finish after the audit is published.",
+                    "additionalProperties": True,
+                },
+            },
+            "additionalProperties": False,
+        },
+        "handler": _milestone_publish,
+    },
+    "project_page_get": {
+        "description": "Read an adopted project page (purpose, architecture, or custom) from the owner-local node.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "page_type": {"type": "string", "enum": ["purpose", "architecture", "custom"]},
+                "as_of": {"type": "string"},
+            },
+            "required": ["page_type"],
+            "additionalProperties": False,
+        },
+        "handler": _project_page_get,
+    },
+    "project_page_upsert": {
+        "description": "Create or update an adopted project page on the owner-local node.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "page_type": {"type": "string", "enum": ["purpose", "architecture", "custom"]},
+                "title": {"type": "string"},
+                "content": {"type": "string"},
+                "as_of": {"type": "string"},
+            },
+            "required": ["page_type", "title", "content"],
+            "additionalProperties": False,
+        },
+        "handler": _project_page_upsert,
     },
 }
 

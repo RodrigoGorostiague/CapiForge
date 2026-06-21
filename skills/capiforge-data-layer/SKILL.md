@@ -116,9 +116,9 @@ DB CHECK constraints enforce:
 
 | Phase | Tools |
 | --- | --- |
-| Read | `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get` |
+| Read | `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `project_page_get` |
 | Claim | `tasks_claim`, `tasks_claim_renew`, `tasks_release` |
-| Mutate | `tasks_transition`, `tasks_reconcile_start`, `tasks_reconcile_finish` |
+| Mutate | `tasks_transition`, `tasks_reconcile_start`, `tasks_reconcile_finish`, `project_page_upsert` |
 | Audit | `audit_create_brief`, `audit_publish` |
 
 ## References

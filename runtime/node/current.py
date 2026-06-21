@@ -539,105 +539,29 @@ def tasks_reconcile_start(
 
     def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
         project_id = state.adopted_project["project_id"]
-        task = store.get_task_by_lifecycle_key(project_id, resolved_lifecycle_key)
-        created_task = False
-        if task is None:
-            (
-                create_origin_audit_id,
-                create_description,
-                create_priority,
-                create_effort,
-                create_risk,
-                create_justification,
-                create_execution_context,
-            ) = _require_create_seed(
-                origin_audit_id=origin_audit_id,
-                description=description,
-                priority=priority,
-                effort=effort,
-                risk=risk,
-                task_type=task_type,
-                justification=justification,
-                execution_context=execution_context,
-            )
-            _require_published_origin_audit(store=store, project_id=project_id, audit_id=create_origin_audit_id)
-            create_execution_context = _validate_same_project_context(project_id=project_id, execution_context=create_execution_context)
-            create_execution_context.update(
-                {
-                    "project_id": project_id,
-                    "lifecycle_key": resolved_lifecycle_key,
-                    "lifecycle_plan": resolved_plan,
-                    "lifecycle_creator": {
-                        "node_id": actor.node_id,
-                        "agent_id": actor.agent_id,
-                        "session_id": actor.session_id,
-                    },
-                }
-            )
-            task_id = canonical_id("task", project_id, resolved_lifecycle_key)
-            surface.tasks_create_from_audit(
-                task_id=task_id,
-                project_id=project_id,
-                audit_id=create_origin_audit_id,
-                mutation_id=_mutation_id("lifecycle", "create", task_id, actor.session_id, resolved_as_of),
-                actor=actor,
-                priority=create_priority,
-                effort=create_effort,
-                risk=create_risk,
-                task_type=task_type.strip(),
-                description=create_description,
-                justification=create_justification,
-                execution_context=create_execution_context,
-                initial_state="ready",
-                lifecycle_key=resolved_lifecycle_key,
-            )
-            task = store.get_task(task_id)
-            created_task = True
-        task, claim_id = _prepare_reusable_task(
-            surface=surface,
+        payload = _reconcile_start_core(
+            state=state,
             store=store,
-            project_id=project_id,
-            task=task,
+            surface=surface,
             actor=actor,
+            resolved_as_of=resolved_as_of,
             lifecycle_key=resolved_lifecycle_key,
             plan=resolved_plan,
-            as_of=resolved_as_of,
+            lease_minutes=lease_minutes,
+            origin_audit_id=origin_audit_id,
+            description=description,
+            priority=priority,
+            effort=effort,
+            risk=risk,
+            task_type=task_type,
+            justification=justification,
+            execution_context=execution_context,
         )
-        if claim_id is None:
-            claim_id = canonical_id("claim", project_id, task["task_id"], actor.session_id, lease_started_at, resolved_plan)
-            surface.tasks_claim(
-                claim_id=claim_id,
-                project_id=project_id,
-                task_id=task["task_id"],
-                actor=actor,
-                plan=resolved_plan,
-                lease_started_at=lease_started_at,
-                lease_expires_at=lease_expires_at,
-            )
-        refreshed_task = store.get_task(task["task_id"])
-        if refreshed_task["state"] == "claimed":
-            surface.tasks_transition(
-                project_id=project_id,
-                task_id=task["task_id"],
-                mutation_id=_mutation_id("lifecycle", "start", task["task_id"], actor.session_id, resolved_as_of),
-                actor=actor,
-                requested_state="in_progress",
-                justification=_lifecycle_justification(lifecycle_key=resolved_lifecycle_key, plan=resolved_plan),
-                metadata={"active_claim_session_id": actor.session_id, "as_of": resolved_as_of},
-            )
-            refreshed_task = store.get_task(task["task_id"])
         store.db.commit()
         return {
             "bootstrap_state": state.state,
             "adopted_project": state.adopted_project,
-            "task_id": refreshed_task["task_id"],
-            "claim_id": claim_id,
-            "state": refreshed_task["state"],
-            "lifecycle_key": resolved_lifecycle_key,
-            "origin_audit_id": refreshed_task["origin_audit_id"],
-            "created_task": created_task,
-            "lease_started_at": lease_started_at,
-            "lease_expires_at": lease_expires_at,
+            **payload,
         }
 
     return _with_adopted_surface(
@@ -651,6 +575,170 @@ def tasks_reconcile_start(
         wait_reporter=wait_reporter,
         reader=_reader,
     )
+
+
+def _reconcile_start_core(
+    *,
+    state: BootstrapState,
+    store: NodeStore,
+    surface: NodeMCPSurface,
+    actor: ActorIdentity,
+    resolved_as_of: str,
+    lifecycle_key: str,
+    plan: str,
+    lease_minutes: int,
+    origin_audit_id: str | None,
+    description: str | None,
+    priority: str | None,
+    effort: str | None,
+    risk: str | None,
+    task_type: str | None,
+    justification: JustificationPayload | dict[str, Any] | None,
+    execution_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    project_id = state.adopted_project["project_id"]
+    lease_started_at, lease_expires_at = resolve_lease_window(lease_minutes=lease_minutes, started_at=resolved_as_of)
+    task = store.get_task_by_lifecycle_key(project_id, lifecycle_key)
+    created_task = False
+    if task is None:
+        (
+            create_origin_audit_id,
+            create_description,
+            create_priority,
+            create_effort,
+            create_risk,
+            create_justification,
+            create_execution_context,
+        ) = _require_create_seed(
+            origin_audit_id=origin_audit_id,
+            description=description,
+            priority=priority,
+            effort=effort,
+            risk=risk,
+            task_type=task_type,
+            justification=justification,
+            execution_context=execution_context,
+        )
+        _require_published_origin_audit(store=store, project_id=project_id, audit_id=create_origin_audit_id)
+        create_execution_context = _validate_same_project_context(project_id=project_id, execution_context=create_execution_context)
+        create_execution_context.update(
+            {
+                "project_id": project_id,
+                "lifecycle_key": lifecycle_key,
+                "lifecycle_plan": plan,
+                "lifecycle_creator": {
+                    "node_id": actor.node_id,
+                    "agent_id": actor.agent_id,
+                    "session_id": actor.session_id,
+                },
+            }
+        )
+        task_id = canonical_id("task", project_id, lifecycle_key)
+        surface.tasks_create_from_audit(
+            task_id=task_id,
+            project_id=project_id,
+            audit_id=create_origin_audit_id,
+            mutation_id=_mutation_id("lifecycle", "create", task_id, actor.session_id, resolved_as_of),
+            actor=actor,
+            priority=create_priority,
+            effort=create_effort,
+            risk=create_risk,
+            task_type=task_type.strip(),
+            description=create_description,
+            justification=create_justification,
+            execution_context=create_execution_context,
+            initial_state="ready",
+            lifecycle_key=lifecycle_key,
+        )
+        task = store.get_task(task_id)
+        created_task = True
+    task, claim_id = _prepare_reusable_task(
+        surface=surface,
+        store=store,
+        project_id=project_id,
+        task=task,
+        actor=actor,
+        lifecycle_key=lifecycle_key,
+        plan=plan,
+        as_of=resolved_as_of,
+    )
+    if claim_id is None:
+        claim_id = canonical_id("claim", project_id, task["task_id"], actor.session_id, lease_started_at, plan)
+        surface.tasks_claim(
+            claim_id=claim_id,
+            project_id=project_id,
+            task_id=task["task_id"],
+            actor=actor,
+            plan=plan,
+            lease_started_at=lease_started_at,
+            lease_expires_at=lease_expires_at,
+        )
+    refreshed_task = store.get_task(task["task_id"])
+    if refreshed_task["state"] == "claimed":
+        surface.tasks_transition(
+            project_id=project_id,
+            task_id=task["task_id"],
+            mutation_id=_mutation_id("lifecycle", "start", task["task_id"], actor.session_id, resolved_as_of),
+            actor=actor,
+            requested_state="in_progress",
+            justification=_lifecycle_justification(lifecycle_key=lifecycle_key, plan=plan),
+            metadata={"active_claim_session_id": actor.session_id, "as_of": resolved_as_of},
+        )
+        refreshed_task = store.get_task(task["task_id"])
+    return {
+        "task_id": refreshed_task["task_id"],
+        "claim_id": claim_id,
+        "state": refreshed_task["state"],
+        "lifecycle_key": lifecycle_key,
+        "origin_audit_id": refreshed_task["origin_audit_id"],
+        "created_task": created_task,
+        "lease_started_at": lease_started_at,
+        "lease_expires_at": lease_expires_at,
+    }
+
+
+def _reconcile_finish_core(
+    *,
+    store: NodeStore,
+    surface: NodeMCPSurface,
+    actor: ActorIdentity,
+    project_id: str,
+    resolved_as_of: str,
+    lifecycle_key: str,
+    outcome: str,
+    finish_metadata: dict[str, str],
+) -> dict[str, Any]:
+    task = store.get_task_by_lifecycle_key(project_id, lifecycle_key)
+    if task is None:
+        raise SurfaceError("UNKNOWN_RESOURCE", f"unknown lifecycle task: {lifecycle_key}")
+    task_id = task["task_id"]
+    surface._sync_active_claim_state(
+        project_id=project_id,
+        task_id=task_id,
+        as_of=resolved_as_of,
+        expected_session_id=actor.session_id,
+    )
+    active_claim = surface.claims.get_active_claim(project_id=project_id, task_id=task_id, as_of=resolved_as_of) if surface.claims else None
+    if not active_claim or active_claim.session_id != actor.session_id:
+        _raise_finish_claim_error(store=store, task_id=task_id, session_id=actor.session_id, as_of=resolved_as_of)
+    surface.tasks_transition(
+        project_id=project_id,
+        task_id=task_id,
+        mutation_id=_mutation_id("lifecycle", outcome, task_id, actor.session_id, resolved_as_of),
+        actor=actor,
+        requested_state=outcome,
+        justification=_lifecycle_finish_justification(lifecycle_key=lifecycle_key, outcome=outcome),
+        metadata=finish_metadata,
+    )
+    surface.tasks_release(project_id=project_id, task_id=task_id, claim_id=active_claim.claim_id, actor=actor)
+    store.clear_cached_claim(task_id)
+    refreshed_task = store.get_task(task_id)
+    return {
+        "task_id": refreshed_task["task_id"],
+        "state": refreshed_task["state"],
+        "lifecycle_key": lifecycle_key,
+        "outcome": outcome,
+    }
 
 
 def tasks_reconcile_finish(
@@ -688,40 +776,240 @@ def tasks_reconcile_finish(
 
     def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
         project_id = state.adopted_project["project_id"]
-        task = store.get_task_by_lifecycle_key(project_id, resolved_lifecycle_key)
-        if task is None:
-            raise SurfaceError("UNKNOWN_RESOURCE", f"unknown lifecycle task: {resolved_lifecycle_key}")
-        task_id = task["task_id"]
-        surface._sync_active_claim_state(
-            project_id=project_id,
-            task_id=task_id,
-            as_of=resolved_as_of,
-            expected_session_id=actor.session_id,
-        )
-        active_claim = surface.claims.get_active_claim(project_id=project_id, task_id=task_id, as_of=resolved_as_of) if surface.claims else None
-        if not active_claim or active_claim.session_id != actor.session_id:
-            store.db.commit()
-            _raise_finish_claim_error(store=store, task_id=task_id, session_id=actor.session_id, as_of=resolved_as_of)
-        surface.tasks_transition(
-            project_id=project_id,
-            task_id=task_id,
-            mutation_id=_mutation_id("lifecycle", resolved_outcome, task_id, actor.session_id, resolved_as_of),
+        payload = _reconcile_finish_core(
+            store=store,
+            surface=surface,
             actor=actor,
-            requested_state=resolved_outcome,
-            justification=_lifecycle_finish_justification(lifecycle_key=resolved_lifecycle_key, outcome=resolved_outcome),
-            metadata=finish_metadata,
+            project_id=project_id,
+            resolved_as_of=resolved_as_of,
+            lifecycle_key=resolved_lifecycle_key,
+            outcome=resolved_outcome,
+            finish_metadata=finish_metadata,
         )
-        surface.tasks_release(project_id=project_id, task_id=task_id, claim_id=active_claim.claim_id, actor=actor)
-        store.clear_cached_claim(task_id)
         store.db.commit()
-        refreshed_task = store.get_task(task_id)
         return {
             "bootstrap_state": state.state,
             "adopted_project": state.adopted_project,
-            "task_id": refreshed_task["task_id"],
-            "state": refreshed_task["state"],
-            "lifecycle_key": resolved_lifecycle_key,
-            "outcome": resolved_outcome,
+            **payload,
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def _parse_milestone_lifecycle(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise SurfaceError("INVALID_ARGUMENTS", "lifecycle must be an object when provided")
+    return payload
+
+
+def milestone_publish(
+    bootstrap: NodeBootstrap,
+    *,
+    title: str | None = None,
+    content: str | None = None,
+    audit_id: str | None = None,
+    as_of: str | None = None,
+    lifecycle: dict[str, Any] | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "milestone_publish",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    lifecycle_payload = _parse_milestone_lifecycle(lifecycle)
+    has_audit_create = isinstance(title, str) and title.strip() and isinstance(content, str) and content.strip()
+    has_audit_publish = isinstance(audit_id, str) and audit_id.strip()
+    if not has_audit_create and not has_audit_publish:
+        raise SurfaceError("INVALID_ARGUMENTS", "milestone_publish requires title and content, or audit_id to publish an existing draft")
+    resolved_title = title.strip() if has_audit_create else None
+    resolved_content = content.strip() if has_audit_create else None
+    resolved_audit_id = audit_id.strip() if has_audit_publish else None
+    lifecycle_lease_as_of = as_of
+    if lifecycle_payload:
+        lease_minutes = lifecycle_payload.get("lease_minutes", 5)
+        if not isinstance(lease_minutes, int) or lease_minutes <= 0:
+            raise SurfaceError("INVALID_ARGUMENTS", "lifecycle.lease_minutes must be a positive integer")
+        lifecycle_lease_as_of, _ = resolve_lease_window(lease_minutes=lease_minutes, started_at=as_of)
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        published_audit_id = resolved_audit_id
+        created_audit = False
+        if has_audit_create:
+            generated_audit_id = canonical_id("audit", project_id, resolved_as_of, resolved_title)
+            create_result = surface.audit_create_brief(
+                audit_id=generated_audit_id,
+                project_id=project_id,
+                title=resolved_title,
+                content=resolved_content,
+                actor=actor,
+            )
+            published_audit_id = create_result["data"]["audit_id"]
+            created_audit = True
+        publish_result = surface.audit_publish(project_id=project_id, audit_id=published_audit_id, actor=actor)
+        published_audit_id = publish_result["data"]["audit_id"]
+        result: dict[str, Any] = {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            "audit_id": published_audit_id,
+            "audit_state": "published",
+            "created_audit": created_audit,
+        }
+        if lifecycle_payload:
+            lifecycle_key = _require_text(lifecycle_payload.get("lifecycle_key"), field_name="lifecycle.lifecycle_key")
+            plan = _require_text(lifecycle_payload.get("plan"), field_name="lifecycle.plan")
+            lease_minutes = lifecycle_payload.get("lease_minutes", 5)
+            if not isinstance(lease_minutes, int) or lease_minutes <= 0:
+                raise SurfaceError("INVALID_ARGUMENTS", "lifecycle.lease_minutes must be a positive integer")
+            resolved_outcome = _require_text(lifecycle_payload.get("outcome"), field_name="lifecycle.outcome")
+            finish_metadata = _require_finish_metadata(
+                outcome=resolved_outcome,
+                done_result=lifecycle_payload.get("done_result"),
+                done_artifacts=lifecycle_payload.get("done_artifacts"),
+                done_references=lifecycle_payload.get("done_references"),
+                done_expected_impact=lifecycle_payload.get("done_expected_impact"),
+                blocked_reason=lifecycle_payload.get("blocked_reason"),
+                blocked_evidence=lifecycle_payload.get("blocked_evidence"),
+                blocked_next_step=lifecycle_payload.get("blocked_next_step"),
+            )
+            origin_audit_id = lifecycle_payload.get("origin_audit_id") or published_audit_id
+            start_payload = _reconcile_start_core(
+                state=state,
+                store=store,
+                surface=surface,
+                actor=actor,
+                resolved_as_of=resolved_as_of,
+                lifecycle_key=lifecycle_key,
+                plan=plan,
+                lease_minutes=lease_minutes,
+                origin_audit_id=origin_audit_id,
+                description=lifecycle_payload.get("description"),
+                priority=lifecycle_payload.get("priority"),
+                effort=lifecycle_payload.get("effort"),
+                risk=lifecycle_payload.get("risk"),
+                task_type=lifecycle_payload.get("task_type"),
+                justification=lifecycle_payload.get("justification"),
+                execution_context=lifecycle_payload.get("execution_context"),
+            )
+            finish_payload = _reconcile_finish_core(
+                store=store,
+                surface=surface,
+                actor=actor,
+                project_id=project_id,
+                resolved_as_of=resolved_as_of,
+                lifecycle_key=lifecycle_key,
+                outcome=resolved_outcome,
+                finish_metadata=finish_metadata,
+            )
+            result["lifecycle"] = {**start_payload, **finish_payload}
+        store.db.commit()
+        return result
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=lifecycle_lease_as_of if lifecycle_payload else as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def project_page_get(
+    bootstrap: NodeBootstrap,
+    *,
+    page_type: str,
+    as_of: str | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "project_page_get",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_page_type = _require_text(page_type, field_name="page_type")
+    if resolved_page_type not in {"purpose", "architecture", "custom"}:
+        raise SurfaceError("INVALID_ARGUMENTS", "page_type must be purpose, architecture, or custom")
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, _resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        surface._require_project_reader(project_id=project_id, actor=actor)
+        page = store.get_project_page(project_id, resolved_page_type)
+        if page is None:
+            raise SurfaceError("UNKNOWN_RESOURCE", f"unknown project page type: {resolved_page_type}")
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            **page,
+        }
+
+    return _with_adopted_surface(
+        bootstrap,
+        as_of=as_of,
+        lock_timeout_seconds=lock_timeout_seconds,
+        recover_stale_lock=recover_stale_lock,
+        agent_id=agent_id,
+        session_id=session_id,
+        command=command,
+        wait_reporter=wait_reporter,
+        reader=_reader,
+    )
+
+
+def project_page_upsert(
+    bootstrap: NodeBootstrap,
+    *,
+    page_type: str,
+    title: str,
+    content: str,
+    as_of: str | None = None,
+    lock_timeout_seconds: float = 30.0,
+    recover_stale_lock: bool = False,
+    agent_id: str = "capiforge-agent",
+    session_id: str = "capiforge-agent-session",
+    command: str = "project_page_upsert",
+    wait_reporter: Callable[[str, dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    resolved_page_type = _require_text(page_type, field_name="page_type")
+    if resolved_page_type not in {"purpose", "architecture", "custom"}:
+        raise SurfaceError("INVALID_ARGUMENTS", "page_type must be purpose, architecture, or custom")
+    resolved_title = _require_text(title, field_name="title")
+    if not isinstance(content, str):
+        raise SurfaceError("INVALID_ARGUMENTS", "content must be a string")
+
+    def _reader(state: BootstrapState, store: NodeStore, surface: NodeMCPSurface, actor: ActorIdentity, resolved_as_of: str) -> dict[str, Any]:
+        project_id = state.adopted_project["project_id"]
+        surface._require_owner_local_project_writer(project_id=project_id, actor=actor)
+        page_id = canonical_id("page", project_id, resolved_page_type)
+        page = store.upsert_project_page(
+            page_id=page_id,
+            project_id=project_id,
+            page_type=resolved_page_type,
+            title=resolved_title,
+            content=content,
+            updated_at=resolved_as_of,
+        )
+        store.db.commit()
+        return {
+            "bootstrap_state": state.state,
+            "adopted_project": state.adopted_project,
+            **page,
         }
 
     return _with_adopted_surface(

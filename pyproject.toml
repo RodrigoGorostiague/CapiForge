@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "capiforge"
-version = "0.3.0"
+dynamic = ["version"]
 description = "CapiForge runtime bootstrap and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -29,6 +29,9 @@ capinstall = "runtime.installer.entry:main"
 [tool.setuptools.packages.find]
 include = ["runtime*"]
 namespaces = true
+
+[tool.setuptools.dynamic]
+version = { attr = "runtime.version.__version__" }
 
 [tool.setuptools.package-data]
 runtime = ["web/templates/**/*", "web/static/*"]

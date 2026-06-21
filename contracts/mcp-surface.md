@@ -19,6 +19,7 @@
 | `workspace.get` | Read a workspace and its projects | `workspace_id`, trusted enrolled local actor context | `ok` |
 | `project.entrypoint.get` | Read deterministic project entrypoint | `project_id`, `as_of`, trusted enrolled local actor context with project authorization | `ok` |
 | `tasks.list_by_index` | Read bounded task queues | `project_id`, `index_name`, `as_of`, `limit?`, trusted enrolled local actor context with project authorization | `ok` |
+| `project_page.get` | Read an adopted project page (`purpose`, `architecture`, or `custom`) | `page_type`, `as_of?`, trusted enrolled local actor context with project authorization | `ok` |
 | `sync.status` | Read coordinator sync visibility | `project_id`, trusted enrolled actor context with project authorization | `ok` |
 
 ### Mutate
@@ -29,6 +30,7 @@
 | `tasks.release` | Release an active claim and leave claimed execution | canonical IDs, actor identity, claim ID | `accepted` |
 | `tasks.transition` | Mutate task state or emit routed proposal | canonical IDs, actor identity, justification, target state | `accepted` or `proposal_emitted` |
 | `tasks.create_from_audit` | Create a task with one published origin audit | canonical IDs, actor identity, justification, task fields, execution context | `accepted` or `proposal_emitted` |
+| `project_page.upsert` | Create or update an adopted project page on the owner-local node | `page_type`, `title`, `content`, `as_of?`, trusted owner-local writer actor | `accepted` |
 | `cross_project.request` | Route approved cross-project work to destination owner | source/destination project IDs, actor identity, justification, coordinator-recorded notice/approval for that source→destination pair | `routed` |
 
 Public brief-audit lifecycle composition stays explicit in V1: callers MAY run `audit_create_brief -> audit_publish -> tasks_reconcile_start -> tasks_reconcile_finish`, but `tasks_reconcile_start` MUST only create on miss from a published same-project audit and `tasks_reconcile_finish` MUST reject requests that omit outcome-specific finish metadata.

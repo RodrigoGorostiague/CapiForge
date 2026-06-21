@@ -6,7 +6,9 @@ from fastapi.responses import HTMLResponse
 from runtime.tui.data import resolve_nav_selection
 from runtime.tui.view import build_page_header, resolve_selected_audit, tasks_for_audit
 from runtime.web.context import ViewRoute, load_snapshot, nav_from_query, sidebar_nav
+from runtime.web.local_docs import resolve_local_document
 from runtime.web.markdown import render_markdown
+from runtime.web.project_registry import content_repo_for_project
 from runtime.web.sync_status import build_coord_meta, build_sync_indicator
 from runtime.web.tasks_view import build_tasks_view_context, render_template
 
@@ -102,20 +104,43 @@ async def docs_page(request: Request) -> HTMLResponse:
     context = _common_context(request, "docs")
     project = context["project"]
     nav = context["nav"]
+    document_id = request.query_params.get("document_id")
     if project:
         selected_audit = resolve_selected_audit(project.audits, nav.selected_audit_id)
+        if document_id:
+            selected_audit = None
         linked_tasks = tasks_for_audit(project.all_tasks, selected_audit.audit_id) if selected_audit else ()
         context["audits"] = project.audits
         context["local_documents"] = project.local_documents
         context["selected_audit"] = selected_audit
+        context["selected_document_id"] = document_id
+        context["selected_document"] = None
+        context["local_document_html"] = ""
         context["audit_html"] = render_markdown(selected_audit.content) if selected_audit else ""
         context["linked_tasks"] = linked_tasks
+        if document_id:
+            ctx = request.state.web_ctx
+            repo_root, _node_home = content_repo_for_project(ctx.repo_root, ctx.node_home, project.project_id)
+            try:
+                resolved = resolve_local_document(project=project, document_id=document_id, repo_root=repo_root)
+                context["selected_document"] = resolved.document
+                context["local_document_html"] = render_markdown(resolved.path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                context["document_error"] = str(exc)
+            else:
+                context["document_error"] = None
+        else:
+            context["document_error"] = None
     else:
         context["audits"] = ()
         context["local_documents"] = ()
         context["selected_audit"] = None
+        context["selected_document_id"] = None
+        context["selected_document"] = None
+        context["local_document_html"] = ""
         context["audit_html"] = ""
         context["linked_tasks"] = ()
+        context["document_error"] = None
     return request.state.templates.TemplateResponse(request, "docs.html", context)
 
 

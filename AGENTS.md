@@ -36,10 +36,10 @@
 
 ## MCP Tools (owner-local)
 
-Reads: `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `workspace_get_current`, `sync_status`
+Reads: `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `workspace_get_current`, `sync_status`, `project_page_get`
 
 Claims: `tasks_claim`, `tasks_claim_renew`, `tasks_release`
 
-Mutations: `tasks_transition`, `tasks_reconcile_start`, `tasks_reconcile_finish`
+Mutations: `tasks_transition`, `tasks_reconcile_start`, `tasks_reconcile_finish`, `milestone_publish`, `project_page_upsert`
 
 Audits: `audit_create_brief`, `audit_publish`

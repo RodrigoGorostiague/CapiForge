@@ -288,10 +288,11 @@ capiforge mcp serve --repo-root /path/to/repo --node-home /path/to/repo/.capifor
 
 The stdio MCP surface also exposes:
 
-- `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `workspace_get_current`, `sync_status`
+- `current_get`, `tasks_ready_get`, `tasks_list_by_index`, `project_entrypoint_get`, `project_page_get`, `workspace_get_current`, `sync_status`
 - `tasks_claim`, `tasks_claim_renew`, `tasks_release`, `tasks_transition`
-- `tasks_reconcile_start`, `tasks_reconcile_finish`
+- `tasks_reconcile_start`, `tasks_reconcile_finish`, `milestone_publish`
 - `audit_create_brief`, `audit_publish`
+- `project_page_upsert`
 
 `current_get` returns the same aggregate payload shape as `capiforge current`. `tasks_ready_get` matches `capiforge tasks ready`. `tasks_claim` matches `capiforge tasks claim`.
 

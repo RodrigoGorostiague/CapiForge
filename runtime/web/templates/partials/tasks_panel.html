@@ -2,6 +2,7 @@
 {% from "macros/editable_task_pill.html" import editable_task_pill %}
 <div class="tasks-layout">
   <div class="tasks-main-column">
+    {% include "partials/task_create_form.html" %}
     <div class="filter-bar" id="tasks-filters">
       {% for option in filter_options %}
         <button type="button"

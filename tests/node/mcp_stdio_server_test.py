@@ -265,6 +265,9 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
                 "tasks_claim_renew",
                 "tasks_reconcile_start",
                 "tasks_reconcile_finish",
+                "milestone_publish",
+                "project_page_get",
+                "project_page_upsert",
             },
         )
         self.assertEqual(
@@ -879,6 +882,108 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.addCleanup(store.close)
         self.assertEqual(store.get_task("tsk_lifecycle_ready")["blocked_reason"], "Waiting on dependency")
         self.assertIsNone(store.get_cached_claim("tsk_lifecycle_ready"))
+
+    def test_stdio_server_supports_milestone_publish_composed_flow(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+        payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {
+                    "name": "milestone_publish",
+                    "arguments": {
+                        "title": "Milestone batch audit",
+                        "content": "Published in one MCP call",
+                        "as_of": "2026-06-21T18:00:00Z",
+                        "lifecycle": {
+                            "lifecycle_key": "lifecycle://stdio/milestone-batch",
+                            "plan": "Close milestone work in one call",
+                            "description": "Lifecycle task from milestone_publish",
+                            "priority": "high",
+                            "effort": "medium",
+                            "risk": "low",
+                            "task_type": "ops",
+                            "justification": {
+                                "summary": "Batch milestone close",
+                                "evidence_refs": ["milestone_publish"],
+                                "expected_impact": "Reduce MCP calls for milestones",
+                            },
+                            "execution_context": {"project_id": self.project_id},
+                            "outcome": "done",
+                            "done_result": "Milestone published and lifecycle closed",
+                            "done_artifacts": "runtime/node/current.py",
+                            "done_references": "lifecycle://stdio/milestone-batch",
+                            "done_expected_impact": "One-call milestone publication",
+                        },
+                    },
+                },
+            )
+        )
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["data"]["audit_state"], "published")
+        self.assertEqual(payload["data"]["lifecycle"]["state"], "done")
+        self.assertEqual(payload["data"]["lifecycle"]["lifecycle_key"], "lifecycle://stdio/milestone-batch")
+
+    def test_stdio_server_supports_project_page_get_and_upsert(self) -> None:
+        initialize = self._request(
+            1,
+            "initialize",
+            {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {"name": "unittest", "version": "1.0.0"},
+            },
+        )
+        self.assertEqual(initialize["result"]["protocolVersion"], "2025-03-26")
+        self._notify("notifications/initialized")
+        store = NodeStore.from_file(self.node_home / "node.sqlite3")
+        self.addCleanup(store.close)
+        store.upsert_project_page(
+            page_id="pg_purpose",
+            project_id=self.project_id,
+            page_type="purpose",
+            title="Purpose",
+            content="Initial purpose",
+            updated_at="2026-06-21T12:00:00Z",
+        )
+        store.db.commit()
+
+        get_payload = self._tool_payload(
+            self._request(
+                2,
+                "tools/call",
+                {"name": "project_page_get", "arguments": {"page_type": "purpose"}},
+            )
+        )
+        self.assertEqual(get_payload["status"], "ok")
+        self.assertEqual(get_payload["data"]["content"], "Initial purpose")
+
+        upsert_payload = self._tool_payload(
+            self._request(
+                3,
+                "tools/call",
+                {
+                    "name": "project_page_upsert",
+                    "arguments": {
+                        "page_type": "purpose",
+                        "title": "Purpose",
+                        "content": "Updated purpose via MCP",
+                    },
+                },
+            )
+        )
+        self.assertEqual(upsert_payload["status"], "accepted")
+        self.assertEqual(upsert_payload["data"]["content"], "Updated purpose via MCP")
 
     def test_stdio_server_rejects_finish_without_explicit_metadata(self) -> None:
         initialize = self._request(

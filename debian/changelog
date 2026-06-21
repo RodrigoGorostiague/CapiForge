@@ -1,3 +1,11 @@
+capiforge (0.4.0-1) unstable; urgency=medium
+
+  * MCP project_page_get/project_page_upsert and milestone_publish tools.
+  * Web: local document viewer, inline task create, realtime filter preservation.
+  * Version label in web sidebar; single source runtime.version.__version__.
+
+ -- CapiForge Maintainers <maintainers@capiforge.dev>  Sun, 21 Jun 2026 17:30:00 +0000
+
 capiforge (0.3.0-1) unstable; urgency=medium
 
   * MVP v0.3 documentation hub: project_pages schema, web hub UI, milestone skill.

@@ -29,16 +29,29 @@
         {% if local_documents %}
           <div class="docs-index-label">Documentos locales</div>
           {% for doc in local_documents %}
-            <div class="docs-index-item docs-index-item--static">
+            <a class="docs-index-item{% if selected_document_id == doc.document_id %} is-active{% endif %}"
+               href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&document_id={{ doc.document_id }}">
               <span class="docs-index-title">{{ doc.document_id }}</span>
-              <span class="muted">{{ doc.storage_path }}</span>
-            </div>
+              <span class="muted docs-index-path">{{ doc.storage_path }}</span>
+            </a>
           {% endfor %}
         {% endif %}
       </aside>
 
       <div class="docs-content">
-        {% if selected_audit %}
+        {% if selected_document %}
+          <header class="docs-content-header">
+            <h2>{{ selected_document.document_id }}</h2>
+            <p class="detail-meta">{{ selected_document.storage_path }}</p>
+          </header>
+          {% if document_error %}
+            <div class="empty-state"><p>{{ document_error }}</p></div>
+          {% else %}
+            <article class="notion-prose">
+              {{ local_document_html | safe }}
+            </article>
+          {% endif %}
+        {% elif selected_audit %}
           <header class="docs-content-header">
             <h2>{{ selected_audit.title or selected_audit.audit_id }}</h2>
             <span class="{{ pill_class_for_audit_state(selected_audit.state) }}">{{ pill_label(selected_audit.state) }}</span>
@@ -80,7 +93,7 @@
             {% endif %}
           </section>
         {% else %}
-          <div class="empty-state"><p>Selecciona una auditoría del índice.</p></div>
+          <div class="empty-state"><p>Selecciona una auditoría o un documento local del índice.</p></div>
         {% endif %}
       </div>
     </div>

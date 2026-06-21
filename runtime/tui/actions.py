@@ -26,6 +26,7 @@ WEB_SESSION_ID = "capiforge-web-session"
 class ActionResult:
     ok: bool
     message: str
+    task_id: str | None = None
 
 
 def _with_surface(
@@ -128,6 +129,16 @@ def _resolve_published_audit_id(store: NodeStore, project_id: str, audit_id: str
     return None
 
 
+def _validate_create_task_fields(*, priority: str, task_type: str, initial_state: str) -> ActionResult | None:
+    if priority not in TASK_FIELD_OPTIONS["priority"]:
+        return ActionResult(ok=False, message=f"Invalid priority: {priority}.")
+    if task_type not in TASK_FIELD_OPTIONS["task_type"]:
+        return ActionResult(ok=False, message=f"Invalid task type: {task_type}.")
+    if initial_state not in {"proposed", "ready"}:
+        return ActionResult(ok=False, message=f"Invalid initial state: {initial_state}.")
+    return None
+
+
 def create_task(
     *,
     repo_root: str | Path,
@@ -138,10 +149,17 @@ def create_task(
     task_type: str = "feature",
     initial_state: str = "ready",
     audit_id: str | None = None,
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
+    source: str = "tui",
 ) -> ActionResult:
     cleaned_description = description.strip()
     if not cleaned_description:
         return ActionResult(ok=False, message="Task description is required.")
+    field_error = _validate_create_task_fields(priority=priority, task_type=task_type, initial_state=initial_state)
+    if field_error is not None:
+        return field_error
+    source_label = "web UI" if source == "web" else "TUI"
 
     def _callback(_bootstrap, store, surface, actor, _as_of) -> ActionResult:
         if not store.get_project(project_id):
@@ -149,8 +167,8 @@ def create_task(
         resolved_audit_id = _resolve_published_audit_id(store, project_id, audit_id)
         if not resolved_audit_id:
             return ActionResult(ok=False, message="Publish an audit before creating tasks.")
-        task_id = f"tsk_tui_{uuid4().hex[:12]}"
-        mutation_id = f"mut_tui_{uuid4().hex[:12]}"
+        task_id = f"tsk_{source}_{uuid4().hex[:12]}"
+        mutation_id = f"mut_{source}_{uuid4().hex[:12]}"
         surface.tasks_create_from_audit(
             task_id=task_id,
             project_id=project_id,
@@ -162,13 +180,20 @@ def create_task(
             risk="low",
             task_type=task_type,
             description=cleaned_description,
-            justification=_default_justification(f"Create task from TUI: {cleaned_description}"),
-            execution_context={"source": "tui"},
+            justification=_default_justification(f"Create task from {source_label}: {cleaned_description}"),
+            execution_context={"source": source},
             initial_state=initial_state,
         )
-        return ActionResult(ok=True, message=f"Task '{cleaned_description}' created.")
+        return ActionResult(ok=True, message=f"Task '{cleaned_description}' created.", task_id=task_id)
 
-    return _with_surface(repo_root=repo_root, node_home=node_home, command="tui_create_task", callback=_callback)
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command=f"{source}_create_task",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 def _default_justification(summary: str) -> JustificationPayload:

@@ -121,6 +121,7 @@ class WebAppTest(unittest.TestCase):
         response = client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("CapiForge", response.text)
+        self.assertIn('class="sidebar-brand-version">v0.4.0</span>', response.text)
         self.assertIn("Ship the web UI", response.text)
 
     def test_tasks_page_renders(self) -> None:
@@ -129,8 +130,65 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Ship the web UI", response.text)
         self.assertIn("Claim", response.text)
+        self.assertIn("Nueva tarea", response.text)
         self.assertIn('id="tasks-panel"', response.text)
         self.assertIn("hx-get=", response.text)
+
+    def test_task_create_from_web(self) -> None:
+        client, repo_root = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.post(
+            "/api/tasks/create",
+            data={
+                "project_id": project_id,
+                "workspace_id": "",
+                "filter": "all",
+                "description": "Task created from web UI",
+                "priority": "high",
+                "task_type": "doc",
+                "initial_state": "ready",
+            },
+            headers={"HX-Request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Task created from web UI", response.text)
+        self.assertIn('id="tasks-panel"', response.text)
+        bootstrap = NodeBootstrap(repo_root=repo_root)
+        adopted = bootstrap.adopt_repo()
+        store = NodeStore.from_file(adopted.node_db_path)
+        self.addCleanup(store.close)
+        matches = [
+            row
+            for row in store.db.execute(
+                "SELECT task_id, description, priority, type, state FROM tasks WHERE description = ?",
+                ("Task created from web UI",),
+            ).fetchall()
+        ]
+        self.assertEqual(len(matches), 1)
+        task_id, description, priority, task_type, state = matches[0]
+        self.assertEqual(description, "Task created from web UI")
+        self.assertEqual(priority, "high")
+        self.assertEqual(task_type, "doc")
+        self.assertEqual(state, "ready")
+        self.assertTrue(task_id.startswith("tsk_web_"))
+
+    def test_task_create_requires_description(self) -> None:
+        client, _repo = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.post(
+            "/api/tasks/create",
+            data={
+                "project_id": project_id,
+                "workspace_id": "",
+                "filter": "all",
+                "description": "   ",
+            },
+            headers={"HX-Request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Error:", response.text)
 
     def test_home_sidebar_links_to_root(self) -> None:
         client, _repo = self._adopted_client()
@@ -291,6 +349,24 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Web Audit", response.text)
         self.assertIn("<strong>world</strong>", response.text)
+
+    def test_local_document_viewer_renders_repo_file(self) -> None:
+        client, repo_root = self._adopted_client()
+        doc_path = repo_root / "docs" / "sample.md"
+        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        doc_path.write_text("# Sample\n\nLocal **doc**.", encoding="utf-8")
+        bootstrap = NodeBootstrap(repo_root=repo_root)
+        adopted = bootstrap.adopt_repo()
+        store = NodeStore.from_file(adopted.node_db_path)
+        self.addCleanup(store.close)
+        store.add_local_document("doc_sample", adopted.adopted_project["project_id"], "docs/sample.md")
+        store.db.commit()
+        list_response = client.get("/docs")
+        project_id = list_response.text.split("project_id=")[1].split("&")[0]
+        response = client.get(f"/docs?project_id={project_id}&document_id=doc_sample")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Local <strong>doc</strong>", response.text)
+        self.assertIn("docs/sample.md", response.text)
 
     def test_realtime_assets_on_pages(self) -> None:
         client, _repo = self._adopted_client()

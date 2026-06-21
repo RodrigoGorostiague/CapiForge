@@ -7,6 +7,7 @@ from typing import Sequence
 
 from runtime import bootstrap_cli
 from runtime.node import mcp_stdio
+from runtime.version import __version__
 
 BOOTSTRAP_COMMANDS = {"init", "adopt", "status", "read", "current"}
 MCP_COMMANDS = {"serve"}
@@ -16,7 +17,7 @@ def _package_version() -> str:
     try:
         return version("capiforge")
     except PackageNotFoundError:
-        return "0.1.0"
+        return __version__
 
 
 def _build_parser() -> argparse.ArgumentParser:

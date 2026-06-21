@@ -1,0 +1,55 @@
+<details class="task-create-panel"{% if open %} open{% endif %}>
+  <summary class="task-create-toggle">Nueva tarea</summary>
+  <form class="task-create-form"
+        hx-post="/api/tasks/create"
+        hx-target="#tasks-toast"
+        hx-swap="innerHTML">
+    <input type="hidden" name="project_id" value="{{ project.project_id }}">
+    <input type="hidden" name="workspace_id" value="{{ project.workspace_id }}">
+    <input type="hidden" name="filter" value="{{ nav.task_filter }}">
+    <input type="hidden" name="page" value="{{ tasks_page.page }}">
+    <input type="hidden" name="sort" value="{{ sort_column }}">
+    <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+    <label class="field-label" for="task-description">Descripción</label>
+    <input class="field-input"
+           id="task-description"
+           type="text"
+           name="description"
+           value="{{ description or '' }}"
+           placeholder="Describe la tarea…"
+           required
+           autocomplete="off">
+    <div class="task-create-fields">
+      <div class="task-create-field">
+        <label class="field-label" for="task-priority">Prioridad</label>
+        <select class="field-input" id="task-priority" name="priority">
+          {% for option in priority_options %}
+            <option value="{{ option }}"{% if option == selected_priority %} selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="task-create-field">
+        <label class="field-label" for="task-type">Tipo</label>
+        <select class="field-input" id="task-type" name="task_type">
+          {% for option in task_type_options %}
+            <option value="{{ option }}"{% if option == selected_task_type %} selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="task-create-field">
+        <label class="field-label" for="task-state">Estado inicial</label>
+        <select class="field-input" id="task-state" name="initial_state">
+          {% for option in initial_state_options %}
+            <option value="{{ option }}"{% if option == selected_initial_state %} selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    {% if error %}
+      <p class="task-create-error">{{ error }}</p>
+    {% endif %}
+    <div class="task-create-actions">
+      <button type="submit" class="btn btn-primary btn-sm">Crear tarea</button>
+    </div>
+  </form>
+</details>

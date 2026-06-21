@@ -15,9 +15,9 @@ Use this skill as the **default** CapiForge contract for agents. Most work does 
 
 | Milestone | Publish? | Action |
 | --- | --- | --- |
-| Audit or review completed | Yes | `audit_create_brief` → `audit_publish` |
-| Significant feature or change closed | Yes | `tasks_reconcile_start` → `tasks_reconcile_finish` with `done_*` metadata |
-| Architecture or purpose changed | Yes | Human updates via `capiforge web`, or future `project_page_upsert` + audit addendum |
+| Audit or review completed | Yes | `milestone_publish` or `audit_create_brief` → `audit_publish` |
+| Significant feature or change closed | Yes | `milestone_publish` with `lifecycle`, or `tasks_reconcile_start` → `tasks_reconcile_finish` with `done_*` metadata |
+| Architecture or purpose changed | Yes | `project_page_upsert` + audit addendum, or human updates via `capiforge web` |
 | Micro-task, bugfix, exploration, refactor | **No** | Engram, git, OpenSpec only |
 | Session notes, decisions, conventions | **No** | Engram (`mem_save`, etc.) |
 | Spec / change proposal | **No** | `openspec/` in repo |
@@ -26,11 +26,17 @@ Use this skill as the **default** CapiForge contract for agents. Most work does 
 
 - Keep all technical artifacts in English.
 - Do **not** run pickup → start → close unless the orchestrator explicitly assigned a ready-queue task.
-- Typical milestone: **≤ 3 MCP calls** (audit publish or reconcile finish).
+- Typical milestone: **1 MCP call** with `milestone_publish`, or **≤ 3 MCP calls** with the split audit/reconcile sequence.
 - Never duplicate Engram session memory or OpenSpec content inside CapiForge audits.
 - Never write SQL directly; use public MCP tools only.
 
 ## Audit milestone sequence
+
+Preferred (one call):
+
+1. `milestone_publish` with `title`, `content`, and optional `lifecycle` block to close tracked work.
+
+Split sequence (still supported):
 
 1. `audit_create_brief` with non-empty `title` and markdown `content`.
 2. `audit_publish` with the returned `audit_id`.

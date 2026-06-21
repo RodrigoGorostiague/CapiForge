@@ -250,6 +250,15 @@ html.splash-seen #app-splash {
   text-overflow: ellipsis;
 }
 
+.sidebar-brand-version {
+  margin-left: 6px;
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--cf-muted);
+  letter-spacing: 0.02em;
+  vertical-align: baseline;
+}
+
 .sidebar-nav {
   flex: 1;
   overflow-y: auto;
@@ -845,11 +854,69 @@ html.splash-seen #app-splash {
   text-decoration: none;
 }
 
+.docs-index-path {
+  display: block;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filter-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 16px;
+}
+
+.task-create-panel {
+  margin-bottom: 16px;
+  border: 1px solid var(--cf-border);
+  border-radius: 8px;
+  background: var(--cf-bg);
+}
+
+.task-create-toggle {
+  cursor: pointer;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cf-text);
+  list-style: none;
+}
+
+.task-create-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.task-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+
+.task-create-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.task-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-create-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.task-create-error {
+  margin: 0;
+  color: var(--cf-danger, #c0392b);
+  font-size: 13px;
 }
 
 .filter-pill {

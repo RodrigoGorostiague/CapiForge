@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from runtime.coordinator.claims import ClaimRegistry
 from runtime.node.bootstrap import NodeBootstrap
-from runtime.node.current import audit_create_brief, audit_publish, tasks_reconcile_finish, tasks_reconcile_start
+from runtime.node.current import audit_create_brief, audit_publish, project_page_get, project_page_upsert, tasks_reconcile_finish, tasks_reconcile_start
 from runtime.node.store import NodeStore
 from runtime.shared.ids import ActorIdentity, derive_node_proof
 
@@ -459,6 +459,38 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
 
         self.assertEqual(finished["task_id"], started["task_id"])
         self.assertEqual(finished["state"], "done")
+
+
+class ProjectPageRuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tempdir.cleanup)
+        self.repo_root = Path(self.tempdir.name) / "repo"
+        self.repo_root.mkdir(parents=True, exist_ok=True)
+        self.bootstrap = NodeBootstrap(repo_root=self.repo_root)
+        self.bootstrap.open_or_init(interactive=False)
+        self.state = self.bootstrap.adopt_repo(interactive=False)
+        self.project_id = self.state.adopted_project["project_id"]
+
+    def test_project_page_get_returns_unknown_resource_when_missing(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown project page type"):
+            project_page_get(self.bootstrap, page_type="purpose")
+
+    def test_project_page_upsert_and_get_round_trip(self) -> None:
+        upserted = project_page_upsert(
+            self.bootstrap,
+            page_type="architecture",
+            title="Architecture",
+            content="System overview",
+            as_of="2026-06-21T17:00:00Z",
+        )
+        self.assertEqual(upserted["page_type"], "architecture")
+        self.assertEqual(upserted["content"], "System overview")
+
+        fetched = project_page_get(self.bootstrap, page_type="architecture", as_of="2026-06-21T17:00:00Z")
+        self.assertEqual(fetched["page_id"], upserted["page_id"])
+        self.assertEqual(fetched["content"], "System overview")
+        self.assertEqual(fetched["adopted_project"]["project_id"], self.project_id)
 
 
 if __name__ == "__main__":

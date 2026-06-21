@@ -27,13 +27,25 @@
     return window.location.pathname + window.location.search;
   }
 
+  function tasksPanelUrl() {
+    if (route !== "tasks") {
+      return "";
+    }
+    var search = window.location.search;
+    if (search) {
+      return "/api/partials/tasks-panel" + search;
+    }
+    return panelUrl;
+  }
+
   function refreshActiveView() {
     if (!window.htmx) {
       return;
     }
     syncApi.markUpdating();
-    if (route === "tasks" && panelUrl) {
-      window.htmx.ajax("GET", panelUrl, {
+    var currentPanelUrl = tasksPanelUrl();
+    if (route === "tasks" && currentPanelUrl) {
+      window.htmx.ajax("GET", currentPanelUrl, {
         target: "#tasks-panel",
         swap: "innerHTML scroll:innerHTML",
       });

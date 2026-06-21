@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from runtime.events.change_watcher import ChangeWatcher
 from runtime.events.db_paths import resolve_web_db_paths
 from runtime.events.notify import set_event_bus
+from runtime.version import __version__
 from runtime.web.brand import brand_icons_dir, brand_logo_url
 from runtime.web.context import WebContext
 from runtime.web.routes import api, events, pages
@@ -76,6 +77,7 @@ def create_app(ctx: WebContext) -> FastAPI:
         return response
 
     templates.env.globals.update(
+        app_version=__version__,
         css_variables=css_variables_block(),
         brand_logo_url=brand_logo_url(),
         task_field_options=TASK_FIELD_OPTIONS,

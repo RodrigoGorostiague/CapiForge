@@ -7,7 +7,16 @@ from pathlib import Path
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from runtime.tui.actions import WEB_AGENT_ID, WEB_SESSION_ID, claim_task, release_task, transition_task, update_task_attribute, upsert_project_page
+from runtime.tui.actions import (
+    WEB_AGENT_ID,
+    WEB_SESSION_ID,
+    claim_task,
+    create_task,
+    release_task,
+    transition_task,
+    update_task_attribute,
+    upsert_project_page,
+)
 from runtime.web.adopt_folder import adopt_folder_as_project
 from runtime.web.context import load_snapshot, nav_from_query
 from runtime.web.folder_picker import pick_folder_native
@@ -113,6 +122,81 @@ async def sync_status_partial(request: Request) -> HTMLResponse:
         },
     )
     return HTMLResponse(content=html)
+
+
+@router.post("/tasks/create", response_class=HTMLResponse, response_model=None)
+async def task_create(
+    request: Request,
+    project_id: str = Form(...),
+    workspace_id: str = Form(""),
+    filter: str = Form("all"),
+    page: str = Form("1"),
+    sort: str = Form("description"),
+    sort_dir: str = Form("asc"),
+    description: str = Form(...),
+    priority: str = Form("medium"),
+    task_type: str = Form("feature"),
+    initial_state: str = Form("ready"),
+) -> HTMLResponse:
+    page_num = int(page) if page.isdigit() else 1
+    ctx = request.state.web_ctx
+    snapshot = load_snapshot(ctx)
+    if snapshot.bootstrap_state != "adopted":
+        message = "Error: Bootstrap not adopted."
+        if request.headers.get("hx-request"):
+            return _htmx_action_response(
+                request,
+                message=message,
+                ok=False,
+                workspace_id=workspace_id,
+                project_id=project_id,
+                task_filter=filter,
+                task_id="",
+                page=page_num,
+                sort=sort,
+                sort_dir=sort_dir,
+            )
+        return _redirect_tasks(request, message=message, project_id=project_id, workspace_id=workspace_id, filter=filter)
+
+    repo_root, node_home = _content_paths(request, project_id)
+    result = create_task(
+        repo_root=repo_root,
+        node_home=node_home,
+        project_id=project_id,
+        description=description,
+        priority=priority,
+        task_type=task_type,
+        initial_state=initial_state,
+        agent_id=WEB_AGENT_ID,
+        session_id=WEB_SESSION_ID,
+        source="web",
+    )
+    message = result.message if result.ok else f"Error: {result.message}"
+    selected_task_id = result.task_id or ""
+    if request.headers.get("hx-request"):
+        return _htmx_action_response(
+            request,
+            message=message,
+            ok=result.ok,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            task_filter=filter,
+            task_id=selected_task_id,
+            page=page_num,
+            sort=sort,
+            sort_dir=sort_dir,
+        )
+    return _redirect_tasks(
+        request,
+        task_id=selected_task_id or None,
+        message=message,
+        project_id=project_id,
+        workspace_id=workspace_id,
+        filter=filter,
+        page=str(page_num),
+        sort=sort,
+        sort_dir=sort_dir,
+    )
 
 
 @router.post("/tasks/update-field", response_class=HTMLResponse, response_model=None)
