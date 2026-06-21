@@ -52,8 +52,9 @@ code {
   flex-shrink: 0;
   min-height: var(--app-header-height, 53px);
   padding: 0 12px 0 8px;
-  border-bottom: 1px solid var(--cf-border);
-  background: var(--cf-sidebar);
+  border-bottom: 2px solid var(--cf-border-strong, var(--cf-border));
+  background: var(--cf-header, var(--cf-sidebar));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.65), 0 2px 10px rgba(15, 15, 15, 0.05);
 }
 
 .app-body {
@@ -61,6 +62,7 @@ code {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  background: var(--cf-main, var(--cf-bg));
 }
 
 .main-column {
@@ -68,6 +70,8 @@ code {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: var(--cf-main, var(--cf-bg));
+  border-left: 1px solid var(--cf-border);
 }
 
 .sidebar-toggle {
@@ -92,16 +96,24 @@ code {
 }
 
 .app-shell.sidebar-collapsed .sidebar {
+  flex: 0 0 0;
   width: 0;
   min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
   padding: 0;
   border-right: none;
   overflow: hidden;
 }
 
 html.sidebar-collapsed-init #app-shell.sidebar-collapsed .sidebar {
+  flex: 0 0 0;
   width: 0;
   min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  pointer-events: none;
   padding: 0;
   border-right: none;
   overflow: hidden;
@@ -173,12 +185,12 @@ html.splash-seen #app-splash {
 }
 
 .sidebar {
-  width: 240px;
-  min-width: 240px;
-  max-width: 240px;
-  flex: 0 0 240px;
+  width: var(--sidebar-width, 240px);
+  min-width: var(--sidebar-width, 240px);
+  max-width: var(--sidebar-width, 240px);
+  flex: 0 0 var(--sidebar-width, 240px);
   background: var(--cf-sidebar);
-  border-right: 1px solid var(--cf-border);
+  border-right: 2px solid var(--cf-border-strong, var(--cf-border));
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - var(--app-header-height, 53px));
@@ -187,6 +199,15 @@ html.splash-seen #app-splash {
   align-self: flex-start;
   overflow: hidden;
   z-index: 20;
+  box-shadow: 2px 0 14px rgba(15, 15, 15, 0.04);
+  transition:
+    flex-basis 0.24s ease,
+    width 0.24s ease,
+    min-width 0.24s ease,
+    max-width 0.24s ease,
+    transform 0.24s ease,
+    opacity 0.2s ease,
+    box-shadow 0.24s ease;
 }
 
 .sidebar-backdrop {
@@ -495,6 +516,8 @@ html.splash-seen #app-splash {
 
 .page-header {
   margin-bottom: 32px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--cf-border);
 }
 
 .page-breadcrumb {
@@ -567,6 +590,11 @@ html.splash-seen #app-splash {
 
 .section {
   margin-bottom: 28px;
+  padding: 16px;
+  border: 1px solid var(--cf-border-strong, var(--cf-border));
+  border-radius: 8px;
+  background: var(--cf-bg);
+  box-shadow: 0 1px 3px rgba(15, 15, 15, 0.04);
 }
 
 .section-title {
@@ -685,6 +713,11 @@ html.splash-seen #app-splash {
 .sync-dot--pending { background: #c29343; animation: sync-pulse 1.4s ease-in-out infinite; }
 .sync-dot--stale { background: var(--cf-error); }
 .sync-dot--refreshing { background: var(--cf-cta); animation: sync-pulse 0.9s ease-in-out infinite; }
+
+.sync-status.is-refreshing .sync-label {
+  color: var(--cf-cta);
+  font-weight: 600;
+}
 
 @keyframes sync-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -832,17 +865,20 @@ html.splash-seen #app-splash {
 }
 
 .tasks-layout {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 24px;
-  align-items: start;
+  display: block;
+}
+
+.tasks-main-column {
+  min-width: 0;
 }
 
 .tasks-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
-  border: 1px solid var(--cf-border);
-  border-radius: 6px;
+  border: 1px solid var(--cf-border-strong, var(--cf-border));
+  border-radius: 8px;
+  background: var(--cf-bg);
+  box-shadow: 0 1px 4px rgba(15, 15, 15, 0.05);
 }
 
 .database-table {
@@ -902,20 +938,35 @@ html.splash-seen #app-splash {
 }
 
 .database-table tbody tr.is-selected {
-  background: var(--cf-hover);
+  background: color-mix(in srgb, var(--cf-cta) 10%, var(--cf-bg));
+  box-shadow: inset 3px 0 0 var(--cf-cta);
+}
+
+.database-table tbody tr.is-selected:hover {
+  background: color-mix(in srgb, var(--cf-cta) 14%, var(--cf-bg));
+}
+
+.database-table tbody tr.is-selected .task-row-link {
+  font-weight: 600;
+  color: var(--cf-text);
 }
 
 .database-table tbody tr:last-child td {
   border-bottom: none;
 }
 
+.task-detail-rail {
+  min-width: 0;
+}
+
 .task-detail {
-  border: 1px solid var(--cf-border);
-  border-radius: 6px;
+  border: 1px solid var(--cf-border-strong, var(--cf-border));
+  border-radius: 8px;
   padding: 16px;
-  background: var(--cf-bg);
+  background: var(--cf-detail-panel, var(--cf-sidebar));
   position: sticky;
   top: calc(var(--app-header-height, 53px) + 12px);
+  box-shadow: 0 1px 4px rgba(15, 15, 15, 0.05);
 }
 
 .detail-title {
@@ -955,6 +1006,11 @@ html.splash-seen #app-splash {
   align-items: start;
 }
 
+.docs-index {
+  width: 100%;
+  min-width: 0;
+}
+
 .docs-index-label {
   font-size: 11px;
   font-weight: 600;
@@ -972,6 +1028,8 @@ html.splash-seen #app-splash {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
   padding: 8px 10px;
   border-radius: 4px;
   margin-bottom: 2px;
@@ -1070,6 +1128,44 @@ html.splash-seen #app-splash {
   color: var(--cf-cta);
 }
 
+@media (min-width: 961px) {
+  .tasks-main-column {
+    margin-right: var(--task-detail-width, 320px);
+  }
+
+  .task-detail-rail {
+    position: fixed;
+    top: var(--app-header-height, 53px);
+    right: 0;
+    width: var(--task-detail-width, 320px);
+    height: calc(100vh - var(--app-header-height, 53px));
+    border-left: 2px solid var(--cf-border-strong, var(--cf-border));
+    background: var(--cf-detail-panel, var(--cf-sidebar));
+    overflow-y: auto;
+    z-index: 25;
+    box-shadow: -8px 0 24px rgba(15, 15, 15, 0.06);
+  }
+
+  .task-detail-rail .task-detail {
+    border: none;
+    border-radius: 0;
+    position: static;
+    top: auto;
+    min-height: 100%;
+    padding: 20px 16px 32px;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .docs-layout {
+    border: 1px solid var(--cf-border-strong, var(--cf-border));
+    border-radius: 8px;
+    background: var(--cf-bg);
+    padding: 16px;
+    box-shadow: 0 1px 4px rgba(15, 15, 15, 0.05);
+  }
+}
+
 @media (max-width: 960px) {
   .sidebar-backdrop {
     display: none;
@@ -1099,7 +1195,11 @@ html.splash-seen #app-splash {
     height: auto;
     z-index: 190;
     transform: translateX(0);
-    transition: transform 0.2s ease;
+    opacity: 1;
+    transition:
+      transform 0.24s ease,
+      opacity 0.24s ease,
+      box-shadow 0.24s ease;
     box-shadow: 4px 0 24px rgba(15, 15, 15, 0.12);
   }
 
@@ -1108,9 +1208,11 @@ html.splash-seen #app-splash {
     width: min(280px, 88vw);
     min-width: 0;
     max-width: 280px;
+    flex: none;
     padding: 0;
-    border-right: 1px solid var(--cf-border);
+    border-right: 2px solid var(--cf-border-strong, var(--cf-border));
     transform: translateX(-100%);
+    opacity: 0;
     pointer-events: none;
   }
 
@@ -1133,12 +1235,17 @@ html.splash-seen #app-splash {
     gap: 16px;
   }
 
-  .task-detail:not(.task-detail--empty) {
-    order: -1;
+  .task-detail-rail {
+    order: 1;
   }
 
-  .task-detail {
+  .tasks-main-column {
+    order: 0;
+  }
+
+  .task-detail-rail .task-detail {
     position: static;
+    top: auto;
   }
 
   .page-title {

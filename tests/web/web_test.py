@@ -108,7 +108,7 @@ class WebAppTest(unittest.TestCase):
         for path in ("/", "/tasks", "/docs"):
             response = client.get(path)
             self.assertEqual(response.status_code, 200)
-            self.assertIn("sidebar-brand", response.text)
+            self.assertIn("app-sync-status", response.text)
             self.assertIn("sync-dot", response.text)
             self.assertNotIn("sync-status--header", response.text)
             self.assertNotIn("sidebar-footer", response.text)

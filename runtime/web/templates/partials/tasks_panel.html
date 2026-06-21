@@ -1,20 +1,20 @@
 {% from "macros/task_badges.html" import task_metric_badges %}
 {% from "macros/editable_task_pill.html" import editable_task_pill %}
-<div class="filter-bar" id="tasks-filters">
-  {% for option in filter_options %}
-    <button type="button"
-            class="filter-pill{% if option.active %} is-active{% endif %}"
-            hx-get="{{ option.partial_url }}"
-            hx-target="#tasks-panel"
-            hx-swap="innerHTML scroll:innerHTML"
-            hx-push-url="{{ option.url }}">
-      {{ option.label }} ({{ option.count }})
-    </button>
-  {% endfor %}
-</div>
-
 <div class="tasks-layout">
-  <div class="tasks-table-wrap" id="tasks-table-wrap">
+  <div class="tasks-main-column">
+    <div class="filter-bar" id="tasks-filters">
+      {% for option in filter_options %}
+        <button type="button"
+                class="filter-pill{% if option.active %} is-active{% endif %}"
+                hx-get="{{ option.partial_url }}"
+                hx-target="#tasks-panel"
+                hx-swap="innerHTML scroll:innerHTML"
+                hx-push-url="{{ option.url }}">
+          {{ option.label }} ({{ option.count }})
+        </button>
+      {% endfor %}
+    </div>
+    <div class="tasks-table-wrap" id="tasks-table-wrap">
     <table class="database-table">
       <thead>
         <tr>
@@ -79,6 +79,9 @@
       </div>
     {% endif %}
   </div>
+  </div>
 
-  {% include "partials/task_detail.html" %}
+  <aside class="task-detail-rail{% if selected_task %} has-selection{% endif %}" aria-label="Detalle de tarea">
+    {% include "partials/task_detail.html" %}
+  </aside>
 </div>

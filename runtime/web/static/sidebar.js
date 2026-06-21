@@ -57,10 +57,20 @@
 
   if (nav) {
     nav.addEventListener("click", function (event) {
+      if (event.target.closest("a.sidebar-node")) {
+        if (mobile.matches) {
+          try {
+            localStorage.setItem(KEY, "0");
+          } catch (error) {
+            /* ignore */
+          }
+        }
+        return;
+      }
       if (!mobile.matches) {
         return;
       }
-      if (event.target.closest("a.sidebar-link, a.sidebar-node, button.sidebar-add-project")) {
+      if (event.target.closest("a.sidebar-link, button.sidebar-add-project")) {
         setCollapsed(true);
       }
     });

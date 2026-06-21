@@ -68,8 +68,12 @@ def css_variables_block() -> str:
     p = PALETTE
     lines = [
         f"  --cf-bg: {p.background};",
+        f"  --cf-main: {p.background};",
         f"  --cf-sidebar: {p.panel};",
+        f"  --cf-header: {p.panel};",
+        f"  --cf-detail-panel: #f7f6f3;",
         f"  --cf-border: {p.border};",
+        f"  --cf-border-strong: #d3d1cb;",
         f"  --cf-accent: {p.accent};",
         f"  --cf-cta: {p.cta};",
         f"  --cf-text: {p.text};",
@@ -78,6 +82,9 @@ def css_variables_block() -> str:
         f"  --cf-success: {p.success};",
         f"  --cf-error: {p.error};",
         f"  --cf-rule: {p.rule};",
+        "  --app-header-height: 53px;",
+        "  --task-detail-width: 320px;",
+        "  --sidebar-width: 240px;",
     ]
     for name, (bg, fg) in PILL_TONES.items():
         lines.append(f"  --pill-{name}-bg: {bg};")

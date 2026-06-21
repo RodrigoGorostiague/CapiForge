@@ -46,7 +46,10 @@
           <span class="sidebar-brand-name">CapiForge</span>
         </div>
         {% if sync_indicator %}
-          <div class="sync-status sync-status--brand"
+          <div id="app-sync-status"
+               class="sync-status sync-status--brand"
+               data-base-state="{{ sync_indicator.state }}"
+               data-base-label="{{ sync_indicator.label }}"
                title="{{ sync_indicator.label }}{% if refresh_seconds %} · auto {{ refresh_seconds }}s{% endif %}">
             <span class="sync-dot sync-dot--{{ sync_indicator.state }}"></span>
             <span class="sync-label">{{ sync_indicator.label }}</span>
@@ -95,6 +98,7 @@
   {% endif %}
   <script src="/static/splash.js"></script>
   <script src="/static/sidebar.js"></script>
+  <script src="/static/sync-indicator.js"></script>
   <script src="/static/pill-picker.js"></script>
   <script src="/static/pick-folder.js"></script>
 </body>

@@ -43,6 +43,7 @@
   {% endif %}
 
   <div class="detail-actions">
+    {% if selected_task.state == 'ready' %}
     <form hx-post="/api/tasks/claim" hx-target="#tasks-toast" hx-swap="innerHTML">
       <input type="hidden" name="task_id" value="{{ selected_task.task_id }}">
       <input type="hidden" name="project_id" value="{{ project.project_id }}">
@@ -53,6 +54,7 @@
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
       <button type="submit" class="btn btn-primary">Claim</button>
     </form>
+    {% endif %}
     <form hx-post="/api/tasks/start" hx-target="#tasks-toast" hx-swap="innerHTML">
       <input type="hidden" name="task_id" value="{{ selected_task.task_id }}">
       <input type="hidden" name="project_id" value="{{ project.project_id }}">
