@@ -50,6 +50,7 @@ class InstallerState:
     node_home: str = ""
     checkout_root: str = ""
     install_tui_extra: bool = True
+    install_web_extra: bool = True
     targets: list[str] = field(default_factory=list)
     integration_paths: IntegrationPaths = field(default_factory=IntegrationPaths)
 
@@ -66,6 +67,7 @@ class InstallerState:
             node_home=str(payload.get("node_home", "")),
             checkout_root=str(payload.get("checkout_root", "")),
             install_tui_extra=bool(payload.get("install_tui_extra", True)),
+            install_web_extra=bool(payload.get("install_web_extra", True)),
             targets=targets,
             integration_paths=IntegrationPaths.from_dict(payload.get("integration_paths")),
         )

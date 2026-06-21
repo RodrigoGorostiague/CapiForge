@@ -1,0 +1,84 @@
+{% from "macros/task_badges.html" import task_metric_badges %}
+{% from "macros/editable_task_pill.html" import editable_task_pill %}
+<div class="filter-bar" id="tasks-filters">
+  {% for option in filter_options %}
+    <button type="button"
+            class="filter-pill{% if option.active %} is-active{% endif %}"
+            hx-get="{{ option.partial_url }}"
+            hx-target="#tasks-panel"
+            hx-swap="innerHTML scroll:innerHTML"
+            hx-push-url="{{ option.url }}">
+      {{ option.label }} ({{ option.count }})
+    </button>
+  {% endfor %}
+</div>
+
+<div class="tasks-layout">
+  <div class="tasks-table-wrap" id="tasks-table-wrap">
+    <table class="database-table">
+      <thead>
+        <tr>
+          {% for col in sort_columns %}
+            <th>
+              <button type="button"
+                      class="sort-header{% if col.active %} is-active{% endif %}"
+                      hx-get="{{ col.partial_url }}"
+                      hx-target="#tasks-panel"
+                      hx-swap="innerHTML scroll:innerHTML"
+                      hx-push-url="{{ col.page_url }}">
+                {{ col.label }}{% if col.indicator %} <span class="sort-indicator">{{ col.indicator }}</span>{% endif %}
+              </button>
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in tasks %}
+          <tr class="{% if selected_task and selected_task.task_id == task.task_id %}is-selected{% endif %}">
+            <td>
+              <a class="task-row-link"
+                 href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&filter={{ nav.task_filter }}&page={{ tasks_page.page }}&sort={{ sort_column }}&sort_dir={{ sort_dir }}&task_id={{ task.task_id }}"
+                 hx-get="/api/partials/tasks-panel?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&filter={{ nav.task_filter }}&page={{ tasks_page.page }}&sort={{ sort_column }}&sort_dir={{ sort_dir }}&task_id={{ task.task_id }}"
+                 hx-target="#tasks-panel"
+                 hx-swap="innerHTML show:#task-detail:top"
+                 hx-push-url="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&filter={{ nav.task_filter }}&page={{ tasks_page.page }}&sort={{ sort_column }}&sort_dir={{ sort_dir }}&task_id={{ task.task_id }}">
+                {{ task.description }}
+              </a>
+            </td>
+            <td>{{ editable_task_pill(task, "state", task.state, pill_class_for_task_state(task.state), project, nav, tasks_page, sort_column, sort_dir) }}</td>
+            <td>{{ editable_task_pill(task, "priority", task.priority, pill_class_for_priority(task.priority), project, nav, tasks_page, sort_column, sort_dir) }}</td>
+            <td>{{ editable_task_pill(task, "task_type", task.task_type, pill_class_for_task_type(task.task_type), project, nav, tasks_page, sort_column, sort_dir) }}</td>
+            <td>{{ editable_task_pill(task, "effort", task.effort, pill_class_for_effort(task.effort), project, nav, tasks_page, sort_column, sort_dir) }}</td>
+            <td>{{ editable_task_pill(task, "risk", task.risk, pill_class_for_risk(task.risk), project, nav, tasks_page, sort_column, sort_dir) }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="muted">Sin tareas en este filtro.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if tasks_page.total > tasks_page.page_size %}
+      <div class="pagination-bar">
+        <span class="pagination-meta">{{ tasks_page.total }} tareas · página {{ tasks_page.page }} / {{ tasks_page.total_pages }}</span>
+        <div class="pagination-actions">
+          {% if tasks_page.has_prev %}
+            <button type="button" class="btn btn-ghost btn-sm"
+                    hx-get="{{ tasks_page.prev_url }}"
+                    hx-target="#tasks-panel"
+                    hx-swap="innerHTML scroll:innerHTML"
+                    hx-push-url="{{ tasks_page.prev_page_url }}">← Anterior</button>
+          {% endif %}
+          {% if tasks_page.has_next %}
+            <button type="button" class="btn btn-ghost btn-sm"
+                    hx-get="{{ tasks_page.next_url }}"
+                    hx-target="#tasks-panel"
+                    hx-swap="innerHTML scroll:innerHTML"
+                    hx-push-url="{{ tasks_page.next_page_url }}">Siguiente →</button>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  {% include "partials/task_detail.html" %}
+</div>

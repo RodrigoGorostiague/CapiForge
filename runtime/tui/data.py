@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ class TaskPreview:
     lifecycle_key: str | None = None
     blocked_reason: str | None = None
     blocked_next_step: str | None = None
+    justification_summary: str | None = None
 
 
 ReadyTaskPreview = TaskPreview
@@ -133,6 +135,15 @@ def resolve_as_of(raw: str | None = None) -> str:
 
 
 def _task_preview_from_row(row: dict) -> TaskPreview:
+    justification_summary = None
+    raw_justification = row.get("justification_json")
+    if raw_justification:
+        try:
+            payload = json.loads(raw_justification) if isinstance(raw_justification, str) else raw_justification
+            if isinstance(payload, dict):
+                justification_summary = (payload.get("summary") or "").strip() or None
+        except (TypeError, ValueError, json.JSONDecodeError):
+            justification_summary = None
     return TaskPreview(
         task_id=row["task_id"],
         description=row["description"],
@@ -145,6 +156,7 @@ def _task_preview_from_row(row: dict) -> TaskPreview:
         lifecycle_key=row.get("lifecycle_key"),
         blocked_reason=row.get("blocked_reason"),
         blocked_next_step=row.get("blocked_next_step"),
+        justification_summary=justification_summary,
     )
 
 

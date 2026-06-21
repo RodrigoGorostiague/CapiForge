@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ header.title }} · CapiForge</title>
+  <script>
+    try {
+      if (sessionStorage.getItem("capiforge.splash.seen")) {
+        document.documentElement.classList.add("splash-seen");
+      }
+      var sidebarCollapsed = localStorage.getItem("capiforge.sidebar.collapsed");
+      var sidebarMobile = window.matchMedia("(max-width: 960px)").matches;
+      if (sidebarCollapsed === "1" || (sidebarMobile && sidebarCollapsed !== "0")) {
+        document.documentElement.classList.add("sidebar-collapsed-init");
+        document.addEventListener("DOMContentLoaded", function () {
+          var shell = document.getElementById("app-shell");
+          if (shell) {
+            shell.classList.add("sidebar-collapsed");
+          }
+        });
+      }
+    } catch (e) {}
+  </script>
+  <style>{{ css_variables | safe }}</style>
+  <link rel="stylesheet" href="/static/notion.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <div id="app-splash" class="app-splash" role="status" aria-live="polite" aria-label="Cargando CapiForge">
+    <img class="app-splash-logo" src="{{ brand_logo_url }}" alt="" decoding="async">
+    <div class="app-splash-brand">
+      <div class="app-splash-title">CapiForge</div>
+      <div class="app-splash-loader" role="progressbar" aria-label="Cargando">
+        <div class="app-splash-loader-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-shell" id="app-shell">
+    <header class="app-header">
+      <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-expanded="true" aria-controls="sidebar" aria-label="Ocultar menú">×</button>
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-main">
+          <img class="sidebar-brand-icon" src="{{ brand_logo_url }}" alt="" width="28" height="28" decoding="async">
+          <span class="sidebar-brand-name">CapiForge</span>
+        </div>
+        {% if sync_indicator %}
+          <div class="sync-status sync-status--brand"
+               title="{{ sync_indicator.label }}{% if refresh_seconds %} · auto {{ refresh_seconds }}s{% endif %}">
+            <span class="sync-dot sync-dot--{{ sync_indicator.state }}"></span>
+            <span class="sync-label">{{ sync_indicator.label }}</span>
+          </div>
+        {% elif snapshot.sync_summary %}
+          <div class="sync-status sync-status--brand" title="{{ snapshot.sync_summary }}">
+            <span class="sync-label">{{ snapshot.sync_summary }}</span>
+          </div>
+        {% endif %}
+      </div>
+    </header>
+    <div class="app-body">
+      <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+      <aside class="sidebar" id="sidebar">
+        <div id="nav-toast"></div>
+        {% include "partials/sidebar_nav.html" %}
+      </aside>
+      <div class="main-column">
+        <main class="main">
+      {% if route == 'tasks' and request.query_params.get('msg') %}
+        <div class="notice-banner{% if request.query_params.get('msg', '').startswith('Error') %} notice-banner--error{% else %} notice-banner--ok{% endif %}">
+          {{ request.query_params.get('msg') }}
+        </div>
+      {% elif route == 'home' and request.query_params.get('msg') %}
+        <div class="notice-banner{% if request.query_params.get('msg', '').startswith('Error') %} notice-banner--error{% else %} notice-banner--ok{% endif %}">
+          {{ request.query_params.get('msg') }}
+        </div>
+      {% endif %}
+      {% for notice in snapshot.notices %}
+        <div class="notice-banner">{{ notice }}</div>
+      {% endfor %}
+      <div id="page-content">
+        {% block content %}{% endblock %}
+      </div>
+    </main>
+      </div>
+    </div>
+  </div>
+  {% if refresh_seconds and route != 'tasks' %}
+  <div id="page-auto-refresh" class="htmx-trigger-hidden"
+       hx-get="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}"
+       hx-trigger="every {{ refresh_seconds }}s"
+       hx-target="#page-content"
+       hx-select="#page-content"
+       hx-swap="innerHTML scroll:innerHTML"></div>
+  {% endif %}
+  <script src="/static/splash.js"></script>
+  <script src="/static/sidebar.js"></script>
+  <script src="/static/pill-picker.js"></script>
+  <script src="/static/pick-folder.js"></script>
+</body>
+</html>

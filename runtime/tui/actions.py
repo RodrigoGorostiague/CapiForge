@@ -15,8 +15,11 @@ from runtime.shared.contracts import JustificationPayload
 from runtime.shared.errors import SurfaceError
 from runtime.shared.ids import ActorIdentity, canonical_id
 from runtime.tui.data import LOCAL_AGENT_ID, LOCAL_SESSION_ID, slugify_name
+from runtime.tui.task_fields import TASK_FIELD_DB_COLUMN, TASK_FIELD_OPTIONS
 
 LOCK_TIMEOUT_SECONDS = 30.0
+WEB_AGENT_ID = "capiforge-web"
+WEB_SESSION_ID = "capiforge-web-session"
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,8 @@ def _with_surface(
     node_home: str | Path | None,
     command: str,
     callback: Callable[[NodeBootstrap, NodeStore, NodeMCPSurface, ActorIdentity, str], ActionResult],
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
 ) -> ActionResult:
     bootstrap = NodeBootstrap(repo_root=repo_root, node_home=node_home)
     resolved_as_of = resolve_as_of(None)
@@ -47,7 +52,7 @@ def _with_surface(
                 state = bootstrap._open_or_init_unlocked()
             store = NodeStore.from_file(state.node_db_path)
             try:
-                actor = _build_local_actor(store, state, agent_id=LOCAL_AGENT_ID, session_id=LOCAL_SESSION_ID)
+                actor = _build_local_actor(store, state, agent_id=agent_id, session_id=session_id)
                 surface = NodeMCPSurface(
                     store=store,
                     router=NodeRouter(store),
@@ -177,6 +182,8 @@ def claim_task(
     project_id: str,
     task_id: str,
     plan: str = "Claimed from TUI",
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
 ) -> ActionResult:
     lease_started_at, lease_expires_at = resolve_lease_window(lease_minutes=30)
 
@@ -193,7 +200,14 @@ def claim_task(
         )
         return ActionResult(ok=True, message="Task claimed.")
 
-    return _with_surface(repo_root=repo_root, node_home=node_home, command="tui_claim", callback=_callback)
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command="tui_claim",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 def release_task(
@@ -202,6 +216,8 @@ def release_task(
     node_home: str | Path | None,
     project_id: str,
     task_id: str,
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
 ) -> ActionResult:
     def _callback(_bootstrap, store, surface, actor, as_of) -> ActionResult:
         if not surface.claims:
@@ -212,7 +228,14 @@ def release_task(
         surface.tasks_release(project_id=project_id, task_id=task_id, claim_id=active.claim_id, actor=actor)
         return ActionResult(ok=True, message="Claim released.")
 
-    return _with_surface(repo_root=repo_root, node_home=node_home, command="tui_release", callback=_callback)
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command="tui_release",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
 
 
 def transition_task(
@@ -224,6 +247,8 @@ def transition_task(
     requested_state: str,
     metadata: dict | None = None,
     justification: JustificationPayload | None = None,
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
 ) -> ActionResult:
     resolved_metadata = dict(metadata or {})
     resolved_justification = justification or _default_justification(f"Transition to {requested_state}")
@@ -252,4 +277,60 @@ def transition_task(
         )
         return ActionResult(ok=True, message=f"Task moved to {requested_state.replace('_', ' ')}.")
 
-    return _with_surface(repo_root=repo_root, node_home=node_home, command="tui_transition", callback=_callback)
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command="tui_transition",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )
+
+
+def update_task_attribute(
+    *,
+    repo_root: str | Path,
+    node_home: str | Path | None,
+    project_id: str,
+    task_id: str,
+    field: str,
+    value: str,
+    agent_id: str = LOCAL_AGENT_ID,
+    session_id: str = LOCAL_SESSION_ID,
+) -> ActionResult:
+    options = TASK_FIELD_OPTIONS.get(field)
+    if options is None or value not in options:
+        return ActionResult(ok=False, message="Invalid task field or value.")
+
+    if field == "state":
+        if value in {"claimed", "in_progress"}:
+            return ActionResult(ok=False, message="Use Claim or Start for that state.")
+        return transition_task(
+            repo_root=repo_root,
+            node_home=node_home,
+            project_id=project_id,
+            task_id=task_id,
+            requested_state=value,
+            agent_id=agent_id,
+            session_id=session_id,
+        )
+
+    column = TASK_FIELD_DB_COLUMN.get(field)
+    if column is None:
+        return ActionResult(ok=False, message="Invalid task field.")
+
+    def _callback(_bootstrap, store, _surface, _actor, _as_of) -> ActionResult:
+        if not store.task_belongs_to_project(task_id, project_id):
+            return ActionResult(ok=False, message="Task not found in project.")
+        attr_kwargs = {"task_type": value} if field == "task_type" else {field: value}
+        store.update_task_attribute(task_id, **attr_kwargs)
+        return ActionResult(ok=True, message=f"Updated {field.replace('_', ' ')}.")
+
+    return _with_surface(
+        repo_root=repo_root,
+        node_home=node_home,
+        command="tui_update_task_attribute",
+        callback=_callback,
+        agent_id=agent_id,
+        session_id=session_id,
+    )

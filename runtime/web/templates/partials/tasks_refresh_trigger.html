@@ -1,0 +1,8 @@
+{% if refresh_seconds %}
+<div id="tasks-auto-refresh" class="htmx-trigger-hidden"
+     hx-swap-oob="outerHTML"
+     hx-get="{{ panel_url }}"
+     hx-trigger="every {{ refresh_seconds }}s"
+     hx-target="#tasks-panel"
+     hx-swap="innerHTML scroll:innerHTML"></div>
+{% endif %}

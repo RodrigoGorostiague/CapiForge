@@ -99,6 +99,7 @@ python3 -m pip install -e .
 capiforge --version
 capiforge mcp --help
 capiforge tui
+capiforge web
 ```
 
 #### Install from PPA (Ubuntu/Debian)
@@ -155,7 +156,34 @@ capiforge tasks claim --task-id tsk_123 --plan "Implement the requested change"
 capiforge audit create --title "Brief title" --content-file docs/audits/audit-v01-agent-coordination.md
 capiforge audit publish --audit-id aud_example
 capiforge tui
+capiforge web
 ```
+
+#### Web UI
+
+The web UI complements the terminal UI with a Notion-style browser experience for dashboards, task tables, audit markdown, and lifecycle actions.
+
+Install with the optional `[web]` extra:
+
+```bash
+./capinstall update
+# or manually:
+uv tool install --reinstall --editable '.[web]' --directory /path/to/CapiForge
+# or use the repo venv without touching ~/.local/bin/capiforge:
+uv sync --extra web
+uv run capiforge web --refresh 15
+```
+
+`uv sync --extra web` only updates the checkout `.venv`. The global `capiforge` in `~/.local/bin` needs `capinstall update` or `uv tool install --reinstall`.
+
+Start the local server (opens your browser by default):
+
+```bash
+capiforge web
+capiforge web --port 8741 --no-open --refresh 30
+```
+
+The server binds to `127.0.0.1` by default. Use `--host 0.0.0.0` only when you intentionally want LAN access.
 
 ### When the ready queue is empty
 

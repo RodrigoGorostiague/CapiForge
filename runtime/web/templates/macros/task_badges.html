@@ -1,0 +1,6 @@
+{% macro task_metric_badges(task) %}
+<span class="{{ pill_class_for_task_state(task.state) }}">{{ pill_label(task.state) }}</span>
+<span class="{{ pill_class_for_priority(task.priority) }}">{{ pill_label(task.priority) }}</span>
+<span class="{{ pill_class_for_effort(task.effort) }}">{{ pill_label(task.effort) }}</span>
+<span class="{{ pill_class_for_risk(task.risk) }}">{{ pill_label(task.risk) }}</span>
+{% endmacro %}

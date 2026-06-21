@@ -1,0 +1,262 @@
+import tempfile
+import unittest
+from io import StringIO
+from pathlib import Path
+from unittest.mock import patch
+
+from unittest.mock import patch
+
+try:
+    from fastapi.testclient import TestClient
+
+    from runtime.node.bootstrap import NodeBootstrap
+    from runtime.node.store import NodeStore
+    from runtime.web.app import create_app
+    from runtime.web.cli import DEFAULT_HOST, DEFAULT_PORT, build_parser, main as web_main
+    from runtime.web.context import WebContext
+    from runtime.web.markdown import render_markdown
+except ModuleNotFoundError:
+    TestClient = None
+    create_app = None
+    web_main = None
+
+
+@unittest.skipIf(TestClient is None, "Web dependencies are not installed")
+class WebCLITest(unittest.TestCase):
+    def test_build_parser_defaults(self) -> None:
+        args = build_parser().parse_args([])
+        self.assertEqual(args.host, DEFAULT_HOST)
+        self.assertEqual(args.port, DEFAULT_PORT)
+        self.assertFalse(args.no_open)
+
+    def test_main_reports_missing_dependencies(self) -> None:
+        stderr = StringIO()
+        with patch("runtime.web.cli.sys.stderr", stderr):
+            with patch.dict("sys.modules", {"uvicorn": None}):
+                exit_code = web_main(["--no-open"], prog="capiforge web")
+        self.assertEqual(exit_code, 1)
+        self.assertIn("uv sync --extra web", stderr.getvalue())
+        self.assertIn("capinstall update", stderr.getvalue())
+
+
+@unittest.skipIf(TestClient is None, "Web dependencies are not installed")
+class WebAppTest(unittest.TestCase):
+    def _adopted_client(self) -> tuple[TestClient, Path]:
+        tempdir = tempfile.mkdtemp()
+        self.addCleanup(lambda: Path(tempdir).exists() and __import__("shutil").rmtree(tempdir, ignore_errors=True))
+        repo_root = Path(tempdir) / "repo"
+        repo_root.mkdir(parents=True)
+        bootstrap = NodeBootstrap(repo_root=repo_root)
+        bootstrap.open_or_init()
+        adopted = bootstrap.adopt_repo()
+        store = NodeStore.from_file(adopted.node_db_path)
+        self.addCleanup(store.close)
+        store.create_audit("aud_web", adopted.adopted_project["project_id"], "published", "Web Audit", "## Scope\n\nHello **world**.")
+        store.create_task(
+            "tsk_web",
+            adopted.adopted_project["project_id"],
+            "aud_web",
+            "ready",
+            "high",
+            "medium",
+            "low",
+            "feature",
+            "Ship the web UI",
+        )
+        store.db.commit()
+        ctx = WebContext(repo_root=repo_root, node_home=None, as_of="2026-06-20T12:00:00Z", refresh_seconds=0)
+        return TestClient(create_app(ctx)), repo_root
+
+    def test_home_page_renders(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("CapiForge", response.text)
+        self.assertIn("Ship the web UI", response.text)
+
+    def test_tasks_page_renders(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/tasks")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Ship the web UI", response.text)
+        self.assertIn("Claim", response.text)
+        self.assertIn('id="tasks-panel"', response.text)
+        self.assertIn("hx-get=", response.text)
+
+    def test_home_sidebar_links_to_root(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('href="/?workspace_id=', response.text)
+        self.assertNotIn('href="/home?', response.text)
+
+    def test_tasks_panel_partial(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/api/partials/tasks-panel")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Ship the web UI", response.text)
+        self.assertIn("filter-pill", response.text)
+
+    def test_tasks_pagination_and_badges(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/tasks")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("pill-tone--", response.text)
+
+    def test_sync_indicator_in_sidebar_brand(self) -> None:
+        client, _repo = self._adopted_client()
+        for path in ("/", "/tasks", "/docs"):
+            response = client.get(path)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("sidebar-brand", response.text)
+            self.assertIn("sync-dot", response.text)
+            self.assertNotIn("sync-status--header", response.text)
+            self.assertNotIn("sidebar-footer", response.text)
+
+    def test_brand_logo_and_splash(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("app-splash-loader", response.text)
+        self.assertIn("sidebar-brand-icon", response.text)
+        self.assertIn("/brand/capiforge_logo_original_transparente.png", response.text)
+        logo = client.get("/brand/capiforge_logo_original_transparente.png")
+        self.assertEqual(logo.status_code, 200)
+        self.assertIn("image/png", logo.headers.get("content-type", ""))
+
+    def test_tasks_panel_partial_preserves_filter(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/api/partials/tasks-panel?filter=active")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Activas", response.text)
+        self.assertIn("filter=active", response.text)
+
+    def test_tasks_panel_has_sortable_headers(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/api/partials/tasks-panel?sort=priority&sort_dir=desc")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sort-header", response.text)
+        self.assertIn("sort=priority", response.text)
+        self.assertIn("↓", response.text)
+
+    def test_task_update_field_htmx(self) -> None:
+        client, _repo = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.post(
+            "/api/tasks/update-field",
+            data={
+                "task_id": "tsk_web",
+                "project_id": project_id,
+                "workspace_id": "",
+                "filter": "all",
+                "field": "priority",
+                "value": "critical",
+            },
+            headers={"HX-Request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("pill-picker", response.text)
+        self.assertIn("critical", response.text)
+
+    def test_tasks_panel_has_editable_pills(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/api/partials/tasks-panel")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("pill-picker", response.text)
+
+    def test_task_description_links_to_detail(self) -> None:
+        client, _repo = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.get(
+            f"/api/partials/tasks-panel?project_id={project_id}&filter=all&task_id=tsk_web"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("task-row-link", response.text)
+        self.assertIn("task_id=tsk_web", response.text)
+        self.assertIn('id="task-detail"', response.text)
+        self.assertIn("is-selected", response.text)
+
+    def test_add_project_form_partial(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/")
+        workspace_id = response.text.split("add-project-form?workspace_id=")[1].split('"')[0]
+        form = client.get(f"/api/partials/add-project-form?workspace_id={workspace_id}")
+        self.assertEqual(form.status_code, 200)
+        self.assertIn("folder_path", form.text)
+        self.assertIn("Elegir carpeta", form.text)
+
+    def test_pick_folder_endpoint_without_display(self) -> None:
+        client, _repo = self._adopted_client()
+        with patch.dict("os.environ", {}, clear=True):
+            response = client.get("/api/projects/pick-folder")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+
+    def test_adopt_folder_project(self) -> None:
+        client, hub_repo = self._adopted_client()
+        new_folder = hub_repo.parent / "other-web-project"
+        new_folder.mkdir(exist_ok=True)
+        home = client.get("/")
+        workspace_id = home.text.split("add-project-form?workspace_id=")[1].split('"')[0]
+        response = client.post(
+            "/api/projects/adopt-folder",
+            data={"workspace_id": workspace_id, "folder_path": str(new_folder)},
+            follow_redirects=False,
+        )
+        self.assertIn(response.status_code, {200, 303})
+        self.assertTrue((hub_repo / ".capiforge" / "web" / "project-repos.json").exists())
+        self.assertTrue((new_folder / ".capiforge" / "node" / "bootstrap.json").exists())
+
+        client, _repo = self._adopted_client()
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("sidebar-node", response.text)
+        self.assertIn("expanded_ws=", response.text)
+        self.assertIn("sidebar-chevron", response.text)
+
+    def test_task_action_htmx_returns_toast_and_panel(self) -> None:
+        client, _repo = self._adopted_client()
+        list_response = client.get("/tasks")
+        project_id = list_response.text.split('name="project_id" value="')[1].split('"')[0]
+        response = client.post(
+            "/api/tasks/claim",
+            data={
+                "task_id": "tsk_web",
+                "project_id": project_id,
+                "workspace_id": "",
+                "filter": "all",
+            },
+            headers={"HX-Request": "true"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("notice-banner", response.text)
+        self.assertIn('id="tasks-panel"', response.text)
+        self.assertIn("hx-swap-oob", response.text)
+
+    def test_docs_page_renders_markdown(self) -> None:
+        client, _repo = self._adopted_client()
+        response = client.get("/docs?audit_id=aud_web")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Web Audit", response.text)
+        self.assertIn("<strong>world</strong>", response.text)
+
+    def test_uninitialized_repo_shows_notice(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = Path(tempdir) / "empty"
+            repo_root.mkdir()
+            ctx = WebContext(repo_root=repo_root, node_home=None, as_of=None, refresh_seconds=0)
+            client = TestClient(create_app(ctx))
+            response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("bootstrap", response.text.lower())
+
+
+class WebMarkdownTest(unittest.TestCase):
+    def test_render_markdown_disables_raw_html(self) -> None:
+        if render_markdown is None:
+            self.skipTest("Web dependencies are not installed")
+        html = render_markdown("**bold**")
+        self.assertIn("<strong>bold</strong>", html)

@@ -97,8 +97,27 @@ def _build_parser() -> argparse.ArgumentParser:
     tui_parser.add_argument("--as-of")
     tui_parser.add_argument("--theme", choices=("neon", "notion", "light"))
     tui_parser.add_argument("--auto-refresh", type=int, choices=(0, 15, 30, 60))
+    web_parser = subparsers.add_parser("web", help="Open the CapiForge web UI in your browser")
+    web_parser.add_argument("--repo-root")
+    web_parser.add_argument("--node-home")
+    web_parser.add_argument("--as-of")
+    web_parser.add_argument("--host", default="127.0.0.1")
+    web_parser.add_argument("--port", type=int, default=8741)
+    web_parser.add_argument("--no-open", action="store_true")
+    web_parser.add_argument("--refresh", type=int, choices=(0, 15, 30, 60))
 
     return parser
+
+
+def _handle_web(argv: Sequence[str]) -> int:
+    try:
+        from runtime.web.cli import main as web_main
+    except ImportError:
+        from runtime.web.deps import web_deps_install_hint
+
+        print(web_deps_install_hint(), file=sys.stderr)
+        return 1
+    return web_main(argv, prog="capiforge web")
 
 
 def _handle_tui(argv: Sequence[str]) -> int:
@@ -163,6 +182,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             _build_parser().parse_args(raw_argv)
             return 0
         return _handle_tui(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "web":
+        if "-h" in raw_argv[1:] or "--help" in raw_argv[1:]:
+            _build_parser().parse_args(raw_argv)
+            return 0
+        return _handle_web(raw_argv[1:])
 
     parser = _build_parser()
     args = parser.parse_args(raw_argv)
@@ -170,5 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.parse_args(["mcp", "--help"])
     if args.command == "tui":
         return _handle_tui(raw_argv[1:])
+    if args.command == "web":
+        return _handle_web(raw_argv[1:])
     parser.print_help()
     return 1

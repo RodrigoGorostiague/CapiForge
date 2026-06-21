@@ -1,0 +1,30 @@
+{% macro editable_task_pill(task, field, value, pill_class, project, nav, tasks_page, sort_column, sort_dir) %}
+<details class="pill-picker">
+  <summary class="pill-picker-summary">
+    <span class="{{ pill_class }}">{{ pill_label(value) }}</span>
+  </summary>
+  <div class="pill-picker-menu">
+    <form hx-post="/api/tasks/update-field"
+          hx-target="#tasks-toast"
+          hx-swap="innerHTML"
+          onclick="event.stopPropagation()">
+      <input type="hidden" name="task_id" value="{{ task.task_id }}">
+      <input type="hidden" name="project_id" value="{{ project.project_id }}">
+      <input type="hidden" name="workspace_id" value="{{ project.workspace_id }}">
+      <input type="hidden" name="filter" value="{{ nav.task_filter }}">
+      <input type="hidden" name="page" value="{{ tasks_page.page }}">
+      <input type="hidden" name="sort" value="{{ sort_column }}">
+      <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
+      <input type="hidden" name="field" value="{{ field }}">
+      {% for option in task_field_options[field] %}
+        <button type="submit"
+                name="value"
+                value="{{ option }}"
+                class="pill-picker-option{% if option == value %} is-current{% endif %}">
+          {{ pill_label(option) }}
+        </button>
+      {% endfor %}
+    </form>
+  </div>
+</details>
+{% endmacro %}

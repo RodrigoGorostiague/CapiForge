@@ -1,0 +1,26 @@
+<nav class="sidebar-nav" id="sidebar-nav">
+  {% for item in sidebar_items %}
+    {% if item.kind == "page" %}
+      <a class="sidebar-link sidebar-link--depth-{{ item.depth }}{% if item.active %} is-active{% endif %}"
+         href="{{ item.url }}">
+        {{ item.label }}
+      </a>
+    {% elif item.kind == "add_project" %}
+      <button type="button"
+              class="sidebar-add-project sidebar-node--depth-{{ item.depth }}"
+              hx-get="/api/partials/add-project-form?workspace_id={{ item.workspace_id }}"
+              hx-target="#add-project-panel"
+              hx-swap="innerHTML">
+        {{ item.label }}
+      </button>
+    {% else %}
+      <a class="sidebar-node sidebar-node--depth-{{ item.depth }}{% if item.expanded %} is-expanded{% endif %}"
+         href="{{ item.url }}"
+         aria-expanded="{{ 'true' if item.expanded else 'false' }}">
+        <span class="sidebar-chevron" aria-hidden="true"></span>
+        <span class="sidebar-node-label">{{ item.label }}</span>
+      </a>
+    {% endif %}
+  {% endfor %}
+  <div id="add-project-panel" class="add-project-panel"></div>
+</nav>

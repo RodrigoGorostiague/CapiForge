@@ -427,6 +427,36 @@ class NodeStore:
             ),
         )
 
+    def update_task_attribute(
+        self,
+        task_id: str,
+        *,
+        priority: str | None = None,
+        effort: str | None = None,
+        risk: str | None = None,
+        task_type: str | None = None,
+    ) -> None:
+        if not self.get_task(task_id):
+            raise ValueError(f"unknown task: {task_id}")
+        columns: list[str] = []
+        values: list[str] = []
+        if priority is not None:
+            columns.append("priority = ?")
+            values.append(priority)
+        if effort is not None:
+            columns.append("effort = ?")
+            values.append(effort)
+        if risk is not None:
+            columns.append("risk = ?")
+            values.append(risk)
+        if task_type is not None:
+            columns.append("type = ?")
+            values.append(task_type)
+        if not columns:
+            return
+        values.append(task_id)
+        self.db.execute(f"UPDATE tasks SET {', '.join(columns)} WHERE task_id = ?", values)
+
     def sync_task_with_claim(self, task_id: str, *, claim_status: str | None) -> None:
         task = self.get_task(task_id)
         if not task:

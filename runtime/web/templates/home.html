@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "macros/task_badges.html" import task_metric_badges %}
+{% block content %}
+<section class="page">
+  <header class="page-header">
+    {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
+    <div class="page-title-row">
+      <h1 class="page-title">{{ header.title }}</h1>
+    </div>
+    {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
+  </header>
+
+  {% if not project %}
+    <div class="empty-state">
+      <p>Selecciona un proyecto en la barra lateral o adopta un repositorio con <code>capiforge adopt</code>.</p>
+    </div>
+  {% else %}
+    <section class="section">
+      <h2 class="section-title">Resumen</h2>
+      <p class="section-body">
+        {{ project.owner_node_id or 'unknown' }}
+        {% if snapshot.local_node_id %} · nodo {{ snapshot.local_node_id }}{% endif %}
+      </p>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Siguiente en cola</h2>
+      {% if project.ready_tasks %}
+        <div class="task-row">
+          <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&filter=active&task_id={{ project.ready_tasks[0].task_id }}">{{ project.ready_tasks[0].description }}</a>
+          <div class="badge-group">{{ task_metric_badges(project.ready_tasks[0]) }}</div>
+        </div>
+        <div class="section-actions">
+          <a class="btn btn-primary" href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}">Ver tareas</a>
+        </div>
+      {% else %}
+        <p class="muted">Sin tareas ready.</p>
+      {% endif %}
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Cola</h2>
+      <div class="pill-row">
+        {% for key, count in queue_items %}
+          <span class="{{ pill_class_for_task_state(key) }}">{{ pill_label(key) }} {{ count }}</span>
+        {% else %}
+          <span class="muted">Sin tareas en cola.</span>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Recientes</h2>
+      {% for task in recent_tasks %}
+        <div class="task-row">
+          <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&task_id={{ task.task_id }}">{{ task.description }}</a>
+          <div class="badge-group">{{ task_metric_badges(task) }}</div>
+        </div>
+      {% else %}
+        <p class="muted">Sin tareas recientes.</p>
+      {% endfor %}
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Documentación</h2>
+      <p>{{ project.audits|length }} audit{{ 's' if project.audits|length != 1 else '' }}</p>
+      <a class="btn btn-ghost" href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}">Abrir documentación</a>
+    </section>
+  {% endif %}
+</section>
+{% endblock %}

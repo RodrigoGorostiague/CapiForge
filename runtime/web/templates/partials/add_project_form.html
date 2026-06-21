@@ -1,0 +1,28 @@
+<div class="add-project-form">
+  <h3 class="add-project-title">Añadir proyecto</h3>
+  <p class="muted add-project-help">Elige una carpeta o escribe la ruta absoluta. CapiForge ejecutará <code>init</code> y <code>adopt</code> allí.</p>
+  {% if error %}
+    <p class="add-project-error">{{ error }}</p>
+  {% endif %}
+  <form hx-post="/api/projects/adopt-folder"
+        hx-target="#nav-toast"
+        hx-swap="innerHTML">
+    <input type="hidden" name="workspace_id" value="{{ workspace_id }}">
+    <label class="field-label" for="folder_path">Carpeta del proyecto</label>
+    <div class="field-row">
+      <input class="field-input field-input--grow"
+             id="folder_path"
+             type="text"
+             name="folder_path"
+             value="{{ folder_path or '' }}"
+             placeholder="/home/usuario/proyectos/mi-app"
+             required
+             autocomplete="off">
+      <button type="button" class="btn btn-ghost btn-sm" data-action="pick-folder">Elegir carpeta…</button>
+    </div>
+    <div class="add-project-actions">
+      <button type="submit" class="btn btn-primary">Añadir y adoptar</button>
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-project-panel').innerHTML=''">Cancelar</button>
+    </div>
+  </form>
+</div>

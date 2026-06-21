@@ -178,6 +178,18 @@ class DebInstallModeTest(unittest.TestCase):
         self.assertEqual(capiforge_bin, "/usr/bin/capiforge")
         self.assertEqual(install_mode, "deb")
 
+    def test_package_spec_includes_web_extra_by_default(self) -> None:
+        from runtime.installer.core import InstallOptions
+
+        options = InstallOptions(checkout_root=REPO_ROOT, targets=["cursor"])
+        self.assertEqual(options.package_spec(), ".[web]")
+
+    def test_package_spec_omits_web_extra_when_disabled(self) -> None:
+        from runtime.installer.core import InstallOptions
+
+        options = InstallOptions(checkout_root=REPO_ROOT, targets=["cursor"], install_web_extra=False)
+        self.assertEqual(options.package_spec(), ".")
+
 
 @unittest.skipUnless(shutil.which("uv") or shutil.which("pipx"), "uv or pipx required for installer core integration test")
 class InstallerCoreTest(unittest.TestCase):

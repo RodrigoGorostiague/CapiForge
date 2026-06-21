@@ -52,6 +52,7 @@ class InstallOptions:
     targets: list[str] = field(default_factory=list)
     backend: str = "auto"
     install_tui_extra: bool = True
+    install_web_extra: bool = True
     bootstrap_interactive: bool = False
     bootstrap_uv: bool = False
     reinstall: bool = False
@@ -68,7 +69,12 @@ class InstallOptions:
         return (repo_root / ".capiforge" / "node").resolve()
 
     def package_spec(self) -> str:
-        return "."
+        extras: list[str] = []
+        if self.install_web_extra:
+            extras.append("web")
+        if not extras:
+            return "."
+        return f".[{','.join(extras)}]"
 
 
 class InstallerError(RuntimeError):
@@ -176,7 +182,15 @@ def install_binary(options: InstallOptions) -> tuple[str, str]:
     elif backend == "pipx":
         if options.reinstall:
             _run(["pipx", "reinstall", PACKAGE_NAME])
-        command = ["pipx", "install", "--force", "--editable", str(checkout)]
+        command = ["pipx", "install", "--force", "--editable", spec]
+        completed = _run(command, cwd=checkout)
+        if completed.returncode != 0:
+            raise InstallerError(completed.stderr.strip() or completed.stdout.strip() or "binary install failed")
+        capiforge_bin = detect_capiforge_bin()
+        if not capiforge_bin:
+            local_bin = Path.home() / ".local" / "bin"
+            raise InstallerError(f"capiforge installed but not found in PATH; add {local_bin} to PATH.")
+        return capiforge_bin, backend
     else:
         raise InstallerError(f"unsupported backend: {backend}")
 
@@ -357,6 +371,7 @@ def run_install(options: InstallOptions) -> InstallerState:
         node_home=str(node_home),
         checkout_root=str(options.checkout_root.resolve()),
         install_tui_extra=options.install_tui_extra,
+        install_web_extra=options.install_web_extra,
         targets=list(options.targets),
         integration_paths=integration_paths,
     )
@@ -379,6 +394,7 @@ def run_update(options: InstallOptions, *, state: InstallerState | None = None) 
         targets=existing.targets or options.targets,
         backend=existing.backend if existing.backend not in {"unknown", "deb"} else options.backend,
         install_tui_extra=existing.install_tui_extra,
+        install_web_extra=existing.install_web_extra,
         bootstrap_interactive=options.bootstrap_interactive,
         bootstrap_uv=options.bootstrap_uv,
         reinstall=True,
@@ -470,6 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--node-home")
     common.add_argument("--backend", default="auto", choices=("auto", "uv", "pipx"))
     common.add_argument("--no-tui-extra", action="store_true")
+    common.add_argument("--no-web-extra", action="store_true")
     common.add_argument("--bootstrap-uv", action="store_true")
     common.add_argument("--interactive", action="store_true")
     common.add_argument("--json", action="store_true")
@@ -501,6 +518,7 @@ def _options_from_args(args: argparse.Namespace) -> InstallOptions:
         targets=_parse_targets(args.targets, args),
         backend=args.backend,
         install_tui_extra=not args.no_tui_extra,
+        install_web_extra=not args.no_web_extra,
         bootstrap_interactive=args.interactive,
         bootstrap_uv=args.bootstrap_uv,
         reinstall=getattr(args, "reinstall", False),
