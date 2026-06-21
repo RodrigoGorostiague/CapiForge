@@ -51,7 +51,6 @@ class InstallOptions:
     node_home: Path | None = None
     targets: list[str] = field(default_factory=list)
     backend: str = "auto"
-    install_tui_extra: bool = True
     install_web_extra: bool = True
     bootstrap_interactive: bool = False
     bootstrap_uv: bool = False
@@ -370,7 +369,6 @@ def run_install(options: InstallOptions) -> InstallerState:
         repo_root=str(repo_root),
         node_home=str(node_home),
         checkout_root=str(options.checkout_root.resolve()),
-        install_tui_extra=options.install_tui_extra,
         install_web_extra=options.install_web_extra,
         targets=list(options.targets),
         integration_paths=integration_paths,
@@ -393,7 +391,6 @@ def run_update(options: InstallOptions, *, state: InstallerState | None = None) 
         node_home=Path(existing.node_home),
         targets=existing.targets or options.targets,
         backend=existing.backend if existing.backend not in {"unknown", "deb"} else options.backend,
-        install_tui_extra=existing.install_tui_extra,
         install_web_extra=existing.install_web_extra,
         bootstrap_interactive=options.bootstrap_interactive,
         bootstrap_uv=options.bootstrap_uv,
@@ -485,7 +482,6 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--repo-root")
     common.add_argument("--node-home")
     common.add_argument("--backend", default="auto", choices=("auto", "uv", "pipx"))
-    common.add_argument("--no-tui-extra", action="store_true")
     common.add_argument("--no-web-extra", action="store_true")
     common.add_argument("--bootstrap-uv", action="store_true")
     common.add_argument("--interactive", action="store_true")
@@ -517,7 +513,6 @@ def _options_from_args(args: argparse.Namespace) -> InstallOptions:
         node_home=Path(args.node_home).resolve() if args.node_home else None,
         targets=_parse_targets(args.targets, args),
         backend=args.backend,
-        install_tui_extra=not args.no_tui_extra,
         install_web_extra=not args.no_web_extra,
         bootstrap_interactive=args.interactive,
         bootstrap_uv=args.bootstrap_uv,

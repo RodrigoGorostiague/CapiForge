@@ -22,7 +22,7 @@ Use this checklist before promoting a CapiForge build from staging to a stable P
    sudo dpkg -i ../capiforge_*_all.deb
    sudo apt-get install -f
    capiforge --version
-   capinstall --no-tui-ui verify --json
+   capinstall --no-wizard verify --json
    ```
 
 ## Source upload to staging PPA
@@ -51,10 +51,10 @@ Use this checklist before promoting a CapiForge build from staging to a stable P
    ```bash
    capiforge init --non-interactive
    capiforge adopt --non-interactive
-   capinstall --no-tui-ui verify --json
+   capinstall --no-wizard verify --json
    ```
 3. Confirm share data resolves from `/usr/share/capiforge` without `CAPIFORGE_SHARE`.
-4. Confirm TUI launches when `python3-textual` is present.
+4. Confirm `capiforge web` starts when the `[web]` extra is installed (or use checkout `uv sync --extra web`).
 
 ## Promotion gate
 

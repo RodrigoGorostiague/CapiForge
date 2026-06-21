@@ -10,7 +10,7 @@ usage() {
     cat <<'EOF'
 Usage: capinstall [command] [options]
 
-Interactive installer wizard for CapiForge (default when run in a TTY).
+Interactive installer wizard for CapiForge (default when run in a TTY). Product UI is `capiforge web`.
 
 Commands:
   install       Install capiforge, bootstrap repo, and configure selected integrations
@@ -25,12 +25,12 @@ Options:
   --targets LIST        Comma-separated targets: cursor,opencode
   --repo-root PATH      Repository to bootstrap (default: git root or checkout)
   --node-home PATH      Node home (default: <repo-root>/.capiforge/node)
-  --no-tui-extra        Install without the optional textual extra
-  --backend BACKEND     Installation backend: auto (default), uv, pipx
+  --no-web-extra          Install without the optional web extra (hub UI)
+  --backend BACKEND       Installation backend: auto (default), uv, pipx
   --remove-bootstrap    Uninstall also deletes .capiforge bootstrap data
   --non-interactive     Disable interactive bootstrap lock recovery
   --interactive         Allow interactive bootstrap lock recovery
-  --no-tui-ui           Force CLI mode instead of Textual wizard
+  --no-wizard           Force CLI mode instead of the capinstall Textual wizard
   --json                Emit machine-readable JSON from installer core
 
 Environment:
@@ -41,7 +41,7 @@ Examples:
   ./capinstall install --cursor --opencode --non-interactive
   ./capinstall update --non-interactive
   ./capinstall uninstall --remove-bootstrap --non-interactive
-  ./capinstall --no-tui-ui verify --json
+  ./capinstall --no-wizard verify --json
 EOF
 }
 
@@ -60,7 +60,7 @@ launch_tui() {
         exec uv run --directory "${REPO_ROOT}" python -m "${TUI_MODULE}" "$@"
     fi
     if ! python3 -c "import textual" >/dev/null 2>&1; then
-        die "Textual is required for the installer TUI. Install with: uv tool install --editable '.[tui]' --directory '${REPO_ROOT}' or rerun with --no-tui-ui."
+        die "Textual is required for the capinstall wizard. Install dependencies with: uv sync --directory '${REPO_ROOT}' or rerun with --no-wizard."
     fi
     exec python3 -m "${TUI_MODULE}" "$@"
 }
@@ -87,7 +87,7 @@ parse_and_dispatch() {
                 usage
                 exit 0
                 ;;
-            --no-tui-ui)
+            --no-wizard|--no-tui-ui)
                 force_cli=1
                 shift
                 ;;

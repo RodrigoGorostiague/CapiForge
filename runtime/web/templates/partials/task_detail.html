@@ -1,46 +1,8 @@
+{% from "macros/detail_sections.html" import render_detail_sections %}
 {% if selected_task %}
 <aside class="task-detail" id="task-detail">
   <h2 class="detail-title">{{ selected_task.description }}</h2>
-  <p class="detail-meta">{{ selected_task.task_id }}</p>
-  <div class="badge-group badge-group--detail">
-    <span class="{{ pill_class_for_task_state(selected_task.state) }}">{{ pill_label(selected_task.state) }}</span>
-    <span class="{{ pill_class_for_priority(selected_task.priority) }}">{{ pill_label(selected_task.priority) }}</span>
-    <span class="{{ pill_class_for_effort(selected_task.effort) }}">{{ pill_label(selected_task.effort) }}</span>
-    <span class="{{ pill_class_for_risk(selected_task.risk) }}">{{ pill_label(selected_task.risk) }}</span>
-  </div>
-  {% if selected_task.lifecycle_key %}
-    <p class="detail-meta">{{ selected_task.lifecycle_key }}</p>
-  {% endif %}
-  {% if selected_task.justification_summary %}
-    <div class="detail-block">
-      <h3 class="detail-block-title">Justificación</h3>
-      <p>{{ selected_task.justification_summary }}</p>
-    </div>
-  {% endif %}
-  {% if selected_task.state == 'blocked' %}
-    {% if selected_task.blocked_reason %}
-      <p class="detail-blocked">Bloqueo · {{ selected_task.blocked_reason }}</p>
-    {% endif %}
-    {% if selected_task.blocked_next_step %}
-      <p class="detail-meta">→ {{ selected_task.blocked_next_step }}</p>
-    {% endif %}
-  {% endif %}
-  {% if selected_task.origin_audit_id %}
-    <div class="detail-block">
-      <h3 class="detail-block-title">Auditoría</h3>
-      {% if selected_audit %}
-        <a class="audit-link" href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&audit_id={{ selected_audit.audit_id }}">
-          {{ selected_audit.title or selected_audit.audit_id }}
-        </a>
-        <span class="{{ pill_class_for_audit_state(selected_audit.state) }}">{{ pill_label(selected_audit.state) }}</span>
-        <p class="detail-meta">{{ selected_audit.audit_id }}</p>
-      {% else %}
-        <a class="audit-link" href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&audit_id={{ selected_task.origin_audit_id }}">
-          {{ selected_task.origin_audit_id }}
-        </a>
-      {% endif %}
-    </div>
-  {% endif %}
+  {{ render_detail_sections(task_detail_sections, project) }}
 
   <div class="detail-actions">
     {% if selected_task.state == 'ready' %}
@@ -52,7 +14,7 @@
       <input type="hidden" name="page" value="{{ tasks_page.page }}">
       <input type="hidden" name="sort" value="{{ sort_column }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-      <button type="submit" class="btn btn-primary">Claim</button>
+      <button type="submit" class="btn btn-primary">Reclamar</button>
     </form>
     {% endif %}
     <form hx-post="/api/tasks/start" hx-target="#tasks-toast" hx-swap="innerHTML">
@@ -63,7 +25,7 @@
       <input type="hidden" name="page" value="{{ tasks_page.page }}">
       <input type="hidden" name="sort" value="{{ sort_column }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-      <button type="submit" class="btn btn-ghost">Start</button>
+      <button type="submit" class="btn btn-ghost">Iniciar</button>
     </form>
     <form hx-post="/api/tasks/block" hx-target="#tasks-toast" hx-swap="innerHTML">
       <input type="hidden" name="task_id" value="{{ selected_task.task_id }}">
@@ -73,7 +35,7 @@
       <input type="hidden" name="page" value="{{ tasks_page.page }}">
       <input type="hidden" name="sort" value="{{ sort_column }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-      <button type="submit" class="btn btn-ghost">Block</button>
+      <button type="submit" class="btn btn-ghost">Bloquear</button>
     </form>
     <form hx-post="/api/tasks/done" hx-target="#tasks-toast" hx-swap="innerHTML">
       <input type="hidden" name="task_id" value="{{ selected_task.task_id }}">
@@ -83,7 +45,7 @@
       <input type="hidden" name="page" value="{{ tasks_page.page }}">
       <input type="hidden" name="sort" value="{{ sort_column }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-      <button type="submit" class="btn btn-ghost">Done</button>
+      <button type="submit" class="btn btn-ghost">Completar</button>
     </form>
     <form hx-post="/api/tasks/release" hx-target="#tasks-toast" hx-swap="innerHTML">
       <input type="hidden" name="task_id" value="{{ selected_task.task_id }}">
@@ -93,7 +55,7 @@
       <input type="hidden" name="page" value="{{ tasks_page.page }}">
       <input type="hidden" name="sort" value="{{ sort_column }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir }}">
-      <button type="submit" class="btn btn-ghost">Release</button>
+      <button type="submit" class="btn btn-ghost">Liberar</button>
     </form>
   </div>
 </aside>

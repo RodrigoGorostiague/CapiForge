@@ -8,8 +8,8 @@ from runtime.node.mcp import NodeMCPSurface
 from runtime.node.router import NodeRouter
 from runtime.node.store import NodeStore
 from runtime.shared.ids import ActorIdentity
-from runtime.tui.actions import ActionResult, WEB_AGENT_ID, WEB_SESSION_ID, _with_surface
-from runtime.tui.data import LOCAL_AGENT_ID, LOCAL_SESSION_ID, load_home_snapshot, load_project_snapshot, resolve_as_of
+from runtime.hub.actions import ActionResult, WEB_AGENT_ID, WEB_SESSION_ID, _with_surface
+from runtime.hub.data import LOCAL_AGENT_ID, LOCAL_SESSION_ID, load_home_snapshot, load_project_snapshot, resolve_as_of
 from runtime.web.project_registry import save_registry_entry
 
 
@@ -95,7 +95,7 @@ def load_web_snapshot(
     hub_node_home: Path | None,
     as_of: str | None = None,
 ) -> "AppSnapshot":
-    from runtime.tui.data import AppSnapshot
+    from runtime.hub.data import AppSnapshot
 
     resolved_as_of = resolve_as_of(as_of)
     snapshot = load_home_snapshot(repo_root=hub_repo_root, node_home=hub_node_home, as_of=resolved_as_of)
@@ -124,7 +124,7 @@ def load_web_snapshot(
 
 
 def _load_registered_project(registered, *, as_of: str):
-    from runtime.tui.data import ProjectSnapshot
+    from runtime.hub.data import ProjectSnapshot
 
     bootstrap = NodeBootstrap(repo_root=registered.repo_root, node_home=registered.node_home)
     try:

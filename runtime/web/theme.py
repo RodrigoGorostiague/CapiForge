@@ -1,8 +1,38 @@
 from __future__ import annotations
 
-from runtime.tui.theme import LIGHT_PALETTE, labelize
+from dataclasses import dataclass
 
-PALETTE = LIGHT_PALETTE
+from runtime.web.i18n import pill_label
+
+
+@dataclass(frozen=True)
+class _ThemePalette:
+    background: str
+    panel: str
+    border: str
+    accent: str
+    cta: str
+    text: str
+    muted: str
+    hover: str
+    success: str
+    error: str
+    rule: str
+
+
+PALETTE = _ThemePalette(
+    background="#ffffff",
+    panel="#f7f6f3",
+    border="#e9e9e7",
+    accent="#2383e2",
+    cta="#2383e2",
+    text="#37352f",
+    muted="#787774",
+    hover="#efefef",
+    success="#0f7b4a",
+    error="#c4554d",
+    rule="#e0e0e0",
+)
 
 # Semantic pill tones: (background, text)
 PILL_TONES: dict[str, tuple[str, str]] = {
@@ -122,5 +152,3 @@ def pill_class_for_audit_state(state: str) -> str:
     return _pill_class("audit", state, AUDIT_STATE_TONE)
 
 
-def pill_label(key: str) -> str:
-    return labelize(key)

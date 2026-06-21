@@ -2,8 +2,10 @@
 
 ## Architecture
 
-- Product direction (v0.3): [docs/architecture-v01.md](docs/architecture-v01.md)
-- Scope pivot audit: [docs/audits/audit-v03-scope-pivot.md](docs/audits/audit-v03-scope-pivot.md)
+- Product direction (v0.4): [docs/architecture-v01.md](docs/architecture-v01.md)
+- Expanded hub audit: [docs/audits/audit-v04-expanded-hub.md](docs/audits/audit-v04-expanded-hub.md)
+- TUI removal audit: [docs/audits/audit-v04-tui-removal.md](docs/audits/audit-v04-tui-removal.md)
+- MVP v0.4 checklist: [docs/mvp-v04.md](docs/mvp-v04.md)
 - MVP v0.3 checklist: [docs/mvp-v03.md](docs/mvp-v03.md)
 - Coordination MVP v0.2: [docs/mvp.md](docs/mvp.md)
 
@@ -17,7 +19,7 @@
 | New justified work keyed by `lifecycle_key` | `capiforge-record-completed-work` or manual audit + reconcile |
 | DB / truth-boundary semantics | `capiforge-data-layer` |
 | Human review of project state | `capiforge web` (primary surface) |
-| Verify MVP readiness | [docs/mvp-v03.md](docs/mvp-v03.md) |
+| Verify MVP readiness | [docs/mvp-v04.md](docs/mvp-v04.md) (v0.3: [docs/mvp-v03.md](docs/mvp-v03.md)) |
 
 ## What NOT to put in CapiForge
 

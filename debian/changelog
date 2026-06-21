@@ -1,5 +1,8 @@
 capiforge (0.4.0-1) unstable; urgency=medium
 
+  * Expanded hub v0.4: multi-project switcher, onboarding block, docs indexer.
+  * scripts/index_local_docs.py indexes docs/**/*.md into local_documents.
+  * Platform RFCs for v0.5 sync, v0.6 multi-user, v1.0 admin BI.
   * MCP project_page_get/project_page_upsert and milestone_publish tools.
   * Web: local document viewer, inline task create, realtime filter preservation.
   * Version label in web sidebar; single source runtime.version.__version__.

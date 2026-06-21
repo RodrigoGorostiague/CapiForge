@@ -1,0 +1,19 @@
+{% macro render_page_header(header, project_switcher, title=none) %}
+<header class="page-header">
+  {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
+  <div class="page-title-row">
+    <h1 class="page-title">{{ title if title else header.title }}</h1>
+    {% if project_switcher|length > 1 %}
+      <label class="project-switcher">
+        <span class="project-switcher-label">Proyecto</span>
+        <select class="project-switcher-select" aria-label="Cambiar proyecto" onchange="if (this.value) window.location.href=this.value;">
+          {% for item in project_switcher %}
+            <option value="{{ item.url }}"{% if item.active %} selected{% endif %}>{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    {% endif %}
+  </div>
+  {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
+</header>
+{% endmacro %}

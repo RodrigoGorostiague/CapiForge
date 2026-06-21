@@ -1,0 +1,17 @@
+{% macro detail_pill_row(row) %}
+  {% if row.pill_tone == 'state' %}
+    <span class="{{ pill_class_for_task_state(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% elif row.pill_tone == 'priority' %}
+    <span class="{{ pill_class_for_priority(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% elif row.pill_tone == 'type' %}
+    <span class="{{ pill_class_for_task_type(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% elif row.pill_tone == 'effort' %}
+    <span class="{{ pill_class_for_effort(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% elif row.pill_tone == 'risk' %}
+    <span class="{{ pill_class_for_risk(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% elif row.pill_tone == 'audit' %}
+    <span class="{{ pill_class_for_audit_state(row.pill_key) }}">{{ pill_label(row.pill_key) }}</span>
+  {% else %}
+    {{ row.value }}
+  {% endif %}
+{% endmacro %}

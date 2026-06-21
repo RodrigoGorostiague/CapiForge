@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.tui.view import SYNC_LIGHT_LABELS, SyncLightState, resolve_sync_light_state
+from runtime.hub.sync import SYNC_LIGHT_LABELS, SyncLightState, resolve_sync_light_state
 
 
 def build_sync_indicator(

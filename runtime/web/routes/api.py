@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from runtime.tui.actions import (
+from runtime.hub.actions import (
     WEB_AGENT_ID,
     WEB_SESSION_ID,
     claim_task,
@@ -20,11 +20,28 @@ from runtime.tui.actions import (
 from runtime.web.adopt_folder import adopt_folder_as_project
 from runtime.web.context import load_snapshot, nav_from_query
 from runtime.web.folder_picker import pick_folder_native
+from runtime.web.i18n import translate_ui_message
 from runtime.web.project_registry import content_repo_for_project
 from runtime.web.sync_status import build_coord_meta
 from runtime.web.tasks_view import build_tasks_view_context, render_template, render_tasks_panel_bundle
 
 router = APIRouter()
+
+
+def _action_message(result, *, error_prefix: bool = False) -> str:
+    text = translate_ui_message(result.message)
+    if result.ok and not error_prefix:
+        return text
+    if text.startswith("Error:"):
+        return text
+    return f"Error: {text}"
+
+
+def _static_error(message: str) -> str:
+    translated = translate_ui_message(message)
+    if translated.startswith("Error:"):
+        return translated
+    return f"Error: {translated}"
 
 
 def _content_paths(request: Request, project_id: str) -> tuple:
@@ -102,7 +119,7 @@ async def sync_status_partial(request: Request) -> HTMLResponse:
             has_expanded_ws=False,
             has_expanded_proj=False,
         )
-        from runtime.tui.data import resolve_nav_selection
+        from runtime.hub.data import resolve_nav_selection
 
         _, project = resolve_nav_selection(snapshot, nav)
 
@@ -142,7 +159,7 @@ async def task_create(
     ctx = request.state.web_ctx
     snapshot = load_snapshot(ctx)
     if snapshot.bootstrap_state != "adopted":
-        message = "Error: Bootstrap not adopted."
+        message = _static_error("Bootstrap not adopted.")
         if request.headers.get("hx-request"):
             return _htmx_action_response(
                 request,
@@ -171,7 +188,7 @@ async def task_create(
         session_id=WEB_SESSION_ID,
         source="web",
     )
-    message = result.message if result.ok else f"Error: {result.message}"
+    message = _action_message(result)
     selected_task_id = result.task_id or ""
     if request.headers.get("hx-request"):
         return _htmx_action_response(
@@ -216,7 +233,7 @@ async def task_update_field(
     ctx = request.state.web_ctx
     snapshot = load_snapshot(ctx)
     if snapshot.bootstrap_state != "adopted":
-        message = "Error: Bootstrap not adopted."
+        message = _static_error("Bootstrap not adopted.")
         if request.headers.get("hx-request"):
             return _htmx_action_response(
                 request,
@@ -242,7 +259,7 @@ async def task_update_field(
         agent_id=WEB_AGENT_ID,
         session_id=WEB_SESSION_ID,
     )
-    message = result.message if result.ok else f"Error: {result.message}"
+    message = _action_message(result)
     if request.headers.get("hx-request"):
         return _htmx_action_response(
             request,
@@ -285,7 +302,7 @@ async def task_action(
     ctx = request.state.web_ctx
     snapshot = load_snapshot(ctx)
     if snapshot.bootstrap_state != "adopted":
-        message = "Error: Bootstrap not adopted."
+        message = _static_error("Bootstrap not adopted.")
         if request.headers.get("hx-request"):
             return _htmx_action_response(
                 request,
@@ -317,7 +334,7 @@ async def task_action(
         "session_id": WEB_SESSION_ID,
     }
     if action == "claim":
-        result = claim_task(**kwargs, plan="Claimed from web UI")
+        result = claim_task(**kwargs, plan="Reclamada desde la web")
     elif action == "release":
         result = release_task(**kwargs)
     elif action == "start":
@@ -327,7 +344,7 @@ async def task_action(
     elif action == "done":
         result = transition_task(**kwargs, requested_state="done")
     else:
-        message = "Error: Unknown action."
+        message = _static_error("Unknown action.")
         if request.headers.get("hx-request"):
             return _htmx_action_response(
                 request,
@@ -350,7 +367,7 @@ async def task_action(
             filter=filter,
         )
 
-    message = result.message if result.ok else f"Error: {result.message}"
+    message = _action_message(result)
     if request.headers.get("hx-request"):
         return _htmx_action_response(
             request,
@@ -416,14 +433,14 @@ async def adopt_folder_project(
             "project_id": project_id,
             "expanded_ws": workspace_id,
             "expanded_proj": project_id,
-            "msg": result.message,
+            "msg": translate_ui_message(result.message),
         }
         redirect_url = f"/?{urlencode(params)}"
         if request.headers.get("hx-request"):
             return HTMLResponse(content="", headers={"HX-Redirect": redirect_url})
         return RedirectResponse(url=redirect_url, status_code=303)
 
-    message = result.message if result.ok else f"Error: {result.message}"
+    message = _action_message(result)
     if request.headers.get("hx-request"):
         toast_html = render_template(request, "partials/toast.html", {"message": message, "ok": result.ok})
         form_html = render_template(
@@ -457,7 +474,7 @@ async def save_project_page(
     params = {
         "workspace_id": workspace_id,
         "project_id": project_id,
-        "msg": result.message if result.ok else f"Error: {result.message}",
+        "msg": _action_message(result),
     }
     redirect_url = f"/?{urlencode(params)}" if result.ok else f"/project-page?{urlencode({**params, 'page_type': page_type})}"
     return RedirectResponse(url=redirect_url, status_code=303)

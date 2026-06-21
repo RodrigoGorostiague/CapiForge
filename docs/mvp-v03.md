@@ -1,5 +1,7 @@
 # CapiForge MVP v0.3 — Documentation Hub Acceptance Checklist
 
+**Status: complete** (tag `v0.3.0`). Active milestone: [mvp-v04.md](mvp-v04.md).
+
 Use this checklist to confirm the **documentation and task hub** MVP is ready for a single local owner with multiple agents on one adopted repository.
 
 > **Note:** Coordination MVP v0.2 remains complete. See [mvp.md](mvp.md) for the prior agent-coordination checklist and [audits/audit-v03-scope-pivot.md](audits/audit-v03-scope-pivot.md) for the pivot audit.

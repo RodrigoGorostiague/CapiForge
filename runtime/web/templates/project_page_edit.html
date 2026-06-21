@@ -1,13 +1,8 @@
 {% extends "base.html" %}
+{% from "macros/page_header.html" import render_page_header %}
 {% block content %}
 <section class="page page--docs">
-  <header class="page-header">
-    {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
-    <div class="page-title-row">
-      <h1 class="page-title">Editar {{ page_title }}</h1>
-    </div>
-    {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
-  </header>
+  {{ render_page_header(header, project_switcher, title="Editar " ~ page_title) }}
 
   {% if not project %}
     <div class="empty-state"><p>Selecciona un proyecto para editar páginas.</p></div>

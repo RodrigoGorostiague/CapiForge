@@ -4,11 +4,12 @@ from urllib.parse import urlencode
 
 from fastapi import Request
 
-from runtime.tui.data import NavState, count_tasks_by_filter, filter_tasks, resolve_nav_selection
-from runtime.tui.task_fields import TASK_FIELD_OPTIONS
-from runtime.tui.view import TASK_FILTER_OPTIONS, TASK_SORTABLE_COLUMNS, sort_tasks_for_view
+from runtime.hub.data import NavState, count_tasks_by_filter, filter_tasks, resolve_nav_selection
+from runtime.hub.task_fields import TASK_FIELD_OPTIONS
+from runtime.hub.tasks import TASK_FILTER_OPTIONS, TASK_SORTABLE_COLUMNS, sort_tasks_for_view
 from runtime.web.context import load_snapshot, nav_expansion_params, nav_from_query
 from runtime.web.helpers import find_audit, paginate_tasks
+from runtime.web.task_detail import build_task_detail_sections
 
 SORTABLE_COLUMNS = (
     ("description", "Descripción"),
@@ -124,6 +125,7 @@ def build_tasks_view_context(
         "tasks": (),
         "selected_task": None,
         "selected_audit": None,
+        "task_detail_sections": (),
         "tasks_page": {
             "page": 1,
             "page_size": 12,
@@ -253,13 +255,16 @@ def build_tasks_view_context(
         task_id=selected.task_id if selected else resolved_task_id,
     )
 
+    selected_audit = find_audit(project.audits, selected.origin_audit_id) if selected else None
+
     return {
         **base,
         "filter_options": filter_options,
         "sort_columns": sort_columns,
         "tasks": page_tasks,
         "selected_task": selected,
-        "selected_audit": find_audit(project.audits, selected.origin_audit_id) if selected else None,
+        "selected_audit": selected_audit,
+        "task_detail_sections": build_task_detail_sections(selected, selected_audit) if selected else (),
         "tasks_page": tasks_page,
         "panel_url": partial_panel_url(**panel_params),
         "priority_options": TASK_FIELD_OPTIONS["priority"],

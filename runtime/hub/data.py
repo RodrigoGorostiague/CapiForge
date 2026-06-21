@@ -13,10 +13,12 @@ from runtime.node.router import NodeRouter
 from runtime.node.store import NodeStore
 from runtime.shared.errors import SurfaceError
 from runtime.shared.ids import ActorIdentity
-from runtime.tui.theme import DEFAULT_THEME, normalize_theme_name
 
-LOCAL_AGENT_ID = "capiforge-tui"
-LOCAL_SESSION_ID = "capiforge-tui-session"
+HUB_AGENT_ID = "capiforge-hub"
+HUB_SESSION_ID = "capiforge-hub-session"
+# Back-compat aliases for store reads initiated from the web hub.
+LOCAL_AGENT_ID = HUB_AGENT_ID
+LOCAL_SESSION_ID = HUB_SESSION_ID
 
 DEFAULT_AUTO_REFRESH_SECONDS = 15
 AUTO_REFRESH_OPTIONS = (0, 15, 30, 60)
@@ -37,7 +39,16 @@ class TaskPreview:
     lifecycle_key: str | None = None
     blocked_reason: str | None = None
     blocked_next_step: str | None = None
+    blocked_evidence: str | None = None
     justification_summary: str | None = None
+    justification_evidence_refs: tuple[str, ...] = ()
+    justification_expected_impact: str | None = None
+    done_result: str | None = None
+    done_artifacts: str | None = None
+    done_references: str | None = None
+    done_expected_impact: str | None = None
+    claim_plan: str | None = None
+    claim_lease_expires_at: str | None = None
 
 
 ReadyTaskPreview = TaskPreview
@@ -131,13 +142,6 @@ class NavState:
     expanded_projects: frozenset[str] = field(default_factory=frozenset)
 
 
-@dataclass(frozen=True)
-class PersistedTuiSettings:
-    nav: NavState | None = None
-    theme: str = DEFAULT_THEME
-    auto_refresh_seconds: int = DEFAULT_AUTO_REFRESH_SECONDS
-
-
 def resolve_as_of(raw: str | None = None) -> str:
     if raw:
         return raw
@@ -146,12 +150,20 @@ def resolve_as_of(raw: str | None = None) -> str:
 
 def _task_preview_from_row(row: dict) -> TaskPreview:
     justification_summary = None
+    justification_evidence_refs: tuple[str, ...] = ()
+    justification_expected_impact = None
     raw_justification = row.get("justification_json")
     if raw_justification:
         try:
             payload = json.loads(raw_justification) if isinstance(raw_justification, str) else raw_justification
             if isinstance(payload, dict):
                 justification_summary = (payload.get("summary") or "").strip() or None
+                refs = payload.get("evidence_refs")
+                if isinstance(refs, (list, tuple)):
+                    justification_evidence_refs = tuple(str(ref).strip() for ref in refs if str(ref).strip())
+                expected_impact = payload.get("expected_impact")
+                if isinstance(expected_impact, str) and expected_impact.strip():
+                    justification_expected_impact = expected_impact.strip()
         except (TypeError, ValueError, json.JSONDecodeError):
             justification_summary = None
     return TaskPreview(
@@ -166,7 +178,16 @@ def _task_preview_from_row(row: dict) -> TaskPreview:
         lifecycle_key=row.get("lifecycle_key"),
         blocked_reason=row.get("blocked_reason"),
         blocked_next_step=row.get("blocked_next_step"),
+        blocked_evidence=row.get("blocked_evidence"),
         justification_summary=justification_summary,
+        justification_evidence_refs=justification_evidence_refs,
+        justification_expected_impact=justification_expected_impact,
+        done_result=row.get("done_result"),
+        done_artifacts=row.get("done_artifacts"),
+        done_references=row.get("done_references"),
+        done_expected_impact=row.get("done_expected_impact"),
+        claim_plan=row.get("claim_plan"),
+        claim_lease_expires_at=row.get("claim_lease_expires_at"),
     )
 
 
@@ -530,61 +551,3 @@ def default_nav_state(snapshot: AppSnapshot, previous: NavState | None = None) -
         expanded_workspaces=expanded_workspaces,
         expanded_projects=expanded_projects,
     )
-
-
-def load_persisted_tui_state() -> PersistedTuiSettings:
-    path = Path.home() / ".capiforge" / "tui-state.json"
-    if not path.exists():
-        return PersistedTuiSettings()
-    try:
-        import json
-
-        raw = json.loads(path.read_text())
-        nav = NavState(
-            workspace_id=raw.get("workspace_id"),
-            project_id=raw.get("project_id"),
-            view=raw.get("view", "project_home"),
-            task_filter=raw.get("task_filter", "all"),
-            expanded_workspaces=frozenset(raw.get("expanded_workspaces", [])),
-            expanded_projects=frozenset(raw.get("expanded_projects", [])),
-        )
-        return PersistedTuiSettings(
-            nav=nav,
-            theme=normalize_theme_name(raw.get("theme")),
-            auto_refresh_seconds=int(raw.get("auto_refresh_seconds", DEFAULT_AUTO_REFRESH_SECONDS)),
-        )
-    except Exception:
-        return PersistedTuiSettings()
-
-
-def load_persisted_nav_state() -> NavState | None:
-    return load_persisted_tui_state().nav
-
-
-def persist_tui_state(*, nav: NavState, theme: str, auto_refresh_seconds: int = DEFAULT_AUTO_REFRESH_SECONDS) -> None:
-    path = Path.home() / ".capiforge" / "tui-state.json"
-    try:
-        import json
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "workspace_id": nav.workspace_id,
-                    "project_id": nav.project_id,
-                    "view": nav.view,
-                    "task_filter": nav.task_filter,
-                    "theme": normalize_theme_name(theme),
-                    "auto_refresh_seconds": auto_refresh_seconds,
-                    "expanded_workspaces": sorted(nav.expanded_workspaces),
-                    "expanded_projects": sorted(nav.expanded_projects),
-                },
-                indent=2,
-            )
-        )
-    except Exception:
-        return
-
-
-def persist_nav_state(nav: NavState, *, theme: str = DEFAULT_THEME) -> None:
-    persist_tui_state(nav=nav, theme=theme)

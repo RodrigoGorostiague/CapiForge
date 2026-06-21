@@ -16,6 +16,7 @@ from runtime.web.brand import brand_icons_dir, brand_logo_url
 from runtime.web.context import WebContext
 from runtime.web.routes import api, events, pages
 from runtime.web.task_fields import TASK_FIELD_OPTIONS
+from runtime.web.i18n import audit_count_label
 from runtime.web.theme import (
     css_variables_block,
     pill_class_for_audit_state,
@@ -81,6 +82,7 @@ def create_app(ctx: WebContext) -> FastAPI:
         css_variables=css_variables_block(),
         brand_logo_url=brand_logo_url(),
         task_field_options=TASK_FIELD_OPTIONS,
+        audit_count_label=audit_count_label,
         pill_label=pill_label,
         pill_class_for_task_state=pill_class_for_task_state,
         pill_class_for_priority=pill_class_for_priority,

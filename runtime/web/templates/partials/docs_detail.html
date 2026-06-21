@@ -1,0 +1,11 @@
+{% from "macros/detail_sections.html" import render_detail_sections %}
+{% if docs_detail_title %}
+<aside class="task-detail" id="docs-detail">
+  <h2 class="detail-title">{{ docs_detail_title }}</h2>
+  {{ render_detail_sections(docs_detail_sections, project) }}
+</aside>
+{% else %}
+<aside class="task-detail task-detail--empty" id="docs-detail">
+  <p class="muted">Selecciona una auditoría o un documento del índice.</p>
+</aside>
+{% endif %}

@@ -7,8 +7,8 @@ from urllib.parse import urlencode
 
 from fastapi import Request
 
-from runtime.tui.data import AppSnapshot, NavState, ViewName, default_nav_state, load_home_snapshot
-from runtime.tui.nav import build_nav_tree
+from runtime.hub.data import AppSnapshot, NavState, ViewName, default_nav_state, load_home_snapshot
+from runtime.hub.nav import build_nav_tree
 
 ViewRoute = Literal["home", "tasks", "docs", "project_page"]
 
@@ -44,6 +44,8 @@ def load_snapshot(ctx: WebContext) -> AppSnapshot:
 
 
 def view_route_to_name(route: ViewRoute) -> ViewName:
+    if route == "project_page":
+        return "project_home"
     return {
         "home": "project_home",
         "tasks": "project_tasks",
@@ -143,11 +145,56 @@ ROUTE_PATHS: dict[str, str] = {
     "home": "/",
     "tasks": "/tasks",
     "docs": "/docs",
+    "project_page": "/project-page",
 }
 
 
 def page_path(route: str) -> str:
     return ROUTE_PATHS.get(route, f"/{route}")
+
+
+def switch_project_nav(nav: NavState, *, workspace_id: str, project_id: str) -> NavState:
+    return replace(
+        nav,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        selected_task_id=None,
+        selected_audit_id=None,
+    )
+
+
+def build_project_switcher(
+    snapshot: AppSnapshot,
+    nav: NavState,
+    *,
+    request: Request,
+    route: ViewRoute,
+) -> list[dict]:
+    current_path = page_path(route)
+    items: list[dict] = []
+    for workspace in snapshot.workspaces:
+        for project in workspace.projects:
+            target_nav = switch_project_nav(
+                nav,
+                workspace_id=workspace.workspace_id,
+                project_id=project.project_id,
+            )
+            items.append(
+                {
+                    "workspace_id": workspace.workspace_id,
+                    "project_id": project.project_id,
+                    "name": project.name,
+                    "active": nav.project_id == project.project_id and nav.workspace_id == workspace.workspace_id,
+                    "url": build_nav_url(
+                        current_path,
+                        target_nav,
+                        request,
+                        task_id=None,
+                        audit_id=None,
+                    ),
+                }
+            )
+    return items
 
 
 def _clean_nav_label(label: str) -> str:

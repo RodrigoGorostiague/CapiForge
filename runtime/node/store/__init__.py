@@ -267,6 +267,21 @@ class NodeStore:
     def add_local_document(self, document_id: str, project_id: str, storage_path: str, task_id: str | None = None) -> None:
         self.db.execute("INSERT INTO local_documents VALUES (?,?,?,?, 'local_only')", (document_id, project_id, task_id, storage_path))
 
+    def upsert_local_document(self, document_id: str, project_id: str, storage_path: str, task_id: str | None = None) -> None:
+        self.db.execute(
+            "INSERT INTO local_documents (document_id, project_id, task_id, storage_path, retention_scope) "
+            "VALUES (?, ?, ?, ?, 'local_only') "
+            "ON CONFLICT(document_id) DO UPDATE SET storage_path = excluded.storage_path, task_id = excluded.task_id",
+            (document_id, project_id, task_id, storage_path),
+        )
+
+    def get_local_document_by_path(self, project_id: str, storage_path: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT document_id, storage_path FROM local_documents WHERE project_id = ? AND storage_path = ?",
+            (project_id, storage_path),
+        ).fetchone()
+        return dict(row) if row else None
+
     def approve_project_link(self, source_project_id: str, target_project_id: str, approved_by_human_actor_id: str) -> None:
         self.db.execute("INSERT OR REPLACE INTO project_links VALUES (?,?,?)", (source_project_id, target_project_id, approved_by_human_actor_id))
 
@@ -366,10 +381,14 @@ class NodeStore:
 
     def list_project_tasks(self, project_id: str) -> list[dict]:
         rows = self.db.execute(
-            "SELECT task_id, description, state, priority, effort, risk, type, origin_audit_id, "
-            "lifecycle_key, blocked_reason, blocked_next_step "
-            "FROM tasks WHERE project_id = ? "
-            "ORDER BY CASE priority WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, task_id",
+            "SELECT t.task_id, t.description, t.state, t.priority, t.effort, t.risk, t.type, t.origin_audit_id, "
+            "t.lifecycle_key, t.blocked_reason, t.blocked_next_step, t.blocked_evidence, t.justification_json, "
+            "t.done_result, t.done_artifacts, t.done_references, t.done_expected_impact, "
+            "c.plan AS claim_plan, c.lease_expires_at AS claim_lease_expires_at "
+            "FROM tasks t "
+            "LEFT JOIN claims_local_cache c ON c.task_id = t.task_id "
+            "WHERE t.project_id = ? "
+            "ORDER BY CASE t.priority WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END DESC, t.task_id",
             (project_id,),
         ).fetchall()
         return [dict(row) for row in rows]

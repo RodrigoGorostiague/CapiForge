@@ -1,101 +1,60 @@
 {% extends "base.html" %}
-{% from "macros/task_badges.html" import task_metric_badges %}
+{% from "macros/page_header.html" import render_page_header %}
 {% block content %}
-<section class="page page--docs">
-  <header class="page-header">
-    {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
-    <div class="page-title-row">
-      <h1 class="page-title">{{ header.title }}</h1>
-    </div>
-    {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
-  </header>
+<section class="page page--split page--docs">
+  {{ render_page_header(header, project_switcher) }}
 
   {% if not project %}
     <div class="empty-state"><p>Selecciona un proyecto para ver documentación.</p></div>
   {% else %}
     <div class="docs-layout">
-      <aside class="docs-index">
-        <div class="docs-index-label">Auditorías</div>
-        {% for audit in audits %}
-          <a class="docs-index-item{% if selected_audit and selected_audit.audit_id == audit.audit_id %} is-active{% endif %}"
-             href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&audit_id={{ audit.audit_id }}">
-            <span class="docs-index-title">{{ audit.title or audit.audit_id }}</span>
-            <span class="{{ pill_class_for_audit_state(audit.state) }}">{{ pill_label(audit.state) }}</span>
-          </a>
-        {% else %}
-          <p class="muted">Sin auditorías.</p>
-        {% endfor %}
-
-        {% if local_documents %}
-          <div class="docs-index-label">Documentos locales</div>
-          {% for doc in local_documents %}
-            <a class="docs-index-item{% if selected_document_id == doc.document_id %} is-active{% endif %}"
-               href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&document_id={{ doc.document_id }}">
-              <span class="docs-index-title">{{ doc.document_id }}</span>
-              <span class="muted docs-index-path">{{ doc.storage_path }}</span>
+      <div class="docs-main-column">
+        <aside class="docs-index" aria-label="Índice de documentación">
+          <div class="docs-index-label">Auditorías</div>
+          {% for audit in audits %}
+            <a class="docs-index-item{% if selected_audit and selected_audit.audit_id == audit.audit_id %} is-active{% endif %}"
+               href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&audit_id={{ audit.audit_id }}">
+              <span class="docs-index-title">{{ audit.title or audit.audit_id }}</span>
+              <span class="{{ pill_class_for_audit_state(audit.state) }}">{{ pill_label(audit.state) }}</span>
             </a>
-          {% endfor %}
-        {% endif %}
-      </aside>
-
-      <div class="docs-content">
-        {% if selected_document %}
-          <header class="docs-content-header">
-            <h2>{{ selected_document.document_id }}</h2>
-            <p class="detail-meta">{{ selected_document.storage_path }}</p>
-          </header>
-          {% if document_error %}
-            <div class="empty-state"><p>{{ document_error }}</p></div>
           {% else %}
-            <article class="notion-prose">
-              {{ local_document_html | safe }}
-            </article>
-          {% endif %}
-        {% elif selected_audit %}
-          <header class="docs-content-header">
-            <h2>{{ selected_audit.title or selected_audit.audit_id }}</h2>
-            <span class="{{ pill_class_for_audit_state(selected_audit.state) }}">{{ pill_label(selected_audit.state) }}</span>
-            <p class="detail-meta">{{ selected_audit.audit_id }}</p>
-          </header>
-          <article class="notion-prose">
-            {{ audit_html | safe }}
-          </article>
+            <p class="muted">Sin auditorías.</p>
+          {% endfor %}
 
-          <section class="docs-linked-tasks">
-            <h3 class="section-title">Tareas vinculadas</h3>
-            {% if linked_tasks %}
-              <table class="database-table database-table--compact">
-                <thead>
-                  <tr>
-                    <th>Descripción</th>
-                    <th>Estado</th>
-                    <th>Prioridad</th>
-                    <th>Esfuerzo</th>
-                    <th>Riesgo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for task in linked_tasks %}
-                    <tr>
-                      <td>
-                        <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&task_id={{ task.task_id }}">{{ task.description }}</a>
-                      </td>
-                      <td><span class="{{ pill_class_for_task_state(task.state) }}">{{ pill_label(task.state) }}</span></td>
-                      <td><span class="{{ pill_class_for_priority(task.priority) }}">{{ pill_label(task.priority) }}</span></td>
-                      <td><span class="{{ pill_class_for_effort(task.effort) }}">{{ pill_label(task.effort) }}</span></td>
-                      <td><span class="{{ pill_class_for_risk(task.risk) }}">{{ pill_label(task.risk) }}</span></td>
-                    </tr>
-                  {% endfor %}
-                </tbody>
-              </table>
+          {% if local_documents %}
+            <div class="docs-index-label">Documentos locales</div>
+            {% for doc in local_documents %}
+              <a class="docs-index-item{% if (selected_document_id and selected_document_id == doc.document_id) or (selected_doc_path and selected_doc_path == doc.storage_path) %} is-active{% endif %}"
+                 href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&document_id={{ doc.document_id }}">
+                <span class="docs-index-title">{{ doc.document_id }}</span>
+                <span class="muted docs-index-path">{{ doc.storage_path }}</span>
+              </a>
+            {% endfor %}
+          {% endif %}
+        </aside>
+
+        <div class="docs-content">
+          {% if selected_document %}
+            {% if document_error %}
+              <div class="empty-state"><p>{{ document_error }}</p></div>
             {% else %}
-              <p class="muted">Sin tareas vinculadas a esta auditoría.</p>
+              <article class="notion-prose">
+                {{ local_document_html | safe }}
+              </article>
             {% endif %}
-          </section>
-        {% else %}
-          <div class="empty-state"><p>Selecciona una auditoría o un documento local del índice.</p></div>
-        {% endif %}
+          {% elif selected_audit %}
+            <article class="notion-prose">
+              {{ audit_html | safe }}
+            </article>
+          {% else %}
+            <div class="empty-state"><p>Selecciona una auditoría o un documento local del índice.</p></div>
+          {% endif %}
+        </div>
       </div>
+
+      <aside class="docs-detail-rail{% if docs_detail_title %} has-selection{% endif %}" aria-label="Detalle de documentación">
+        {% include "partials/docs_detail.html" %}
+      </aside>
     </div>
   {% endif %}
 </section>

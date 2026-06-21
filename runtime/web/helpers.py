@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.tui.data import AuditPreview, TaskPreview
+from runtime.hub.data import AuditPreview, TaskPreview
 
 TASKS_PAGE_SIZE = 12
 

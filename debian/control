@@ -21,7 +21,7 @@ Depends: ${python3:Depends},
          python3 (>= 3.11),
          python3-textual,
 Description: local-first task and audit runtime for AI agents
- CapiForge provides an owner-local node runtime, MCP server, Textual TUI,
+ CapiForge provides an owner-local node runtime, MCP server, web hub,
  and capinstall integration wizard. Share data (schemas, skills, assets)
  installs under /usr/share/capiforge for system-wide use while project state
  remains in each adopted repository.

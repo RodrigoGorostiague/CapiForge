@@ -1,91 +1,139 @@
 {% extends "base.html" %}
 {% from "macros/task_badges.html" import task_metric_badges %}
+{% from "macros/page_header.html" import render_page_header %}
 {% block content %}
 <section class="page">
-  <header class="page-header">
-    {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
-    <div class="page-title-row">
-      <h1 class="page-title">{{ header.title }}</h1>
-    </div>
-    {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
-  </header>
+  {{ render_page_header(header, project_switcher) }}
 
   {% if not project %}
     <div class="empty-state">
       <p>Selecciona un proyecto en la barra lateral o adopta un repositorio con <code>capiforge adopt</code>.</p>
     </div>
   {% else %}
-    <section class="section">
-      <h2 class="section-title">Resumen</h2>
-      <p class="section-body">
-        {{ project.owner_node_id or 'unknown' }}
-        {% if snapshot.local_node_id %} · nodo {{ snapshot.local_node_id }}{% endif %}
-      </p>
-    </section>
+    <div class="home-dashboard">
+      <section class="home-panel home-panel--summary">
+        <h2 class="section-title">Estado del proyecto</h2>
+        <dl class="detail-dl home-summary-dl">
+          {% for item in home.summary_items %}
+            <dt>{{ item.label }}</dt>
+            <dd>
+              {{ item.value }}
+              {% if item.hint %}
+                <span class="home-summary-hint" title="{{ item.hint }}">{{ item.hint }}</span>
+              {% endif %}
+            </dd>
+          {% endfor %}
+        </dl>
+      </section>
 
-    <section class="section">
-      <h2 class="section-title">Propósito</h2>
-      {% if purpose_html %}
-        <article class="notion-prose">{{ purpose_html | safe }}</article>
-      {% else %}
-        <p class="muted">Sin propósito definido.</p>
-      {% endif %}
-      <a class="btn btn-ghost" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=purpose">Editar propósito</a>
-    </section>
+      <section class="home-panel home-panel--queue">
+        <h2 class="section-title">Cola</h2>
+        {% if home.queue_chips %}
+          <div class="home-queue-chips">
+            {% for chip in home.queue_chips %}
+              <a class="home-queue-chip {{ pill_class_for_task_state(chip.state) }}"
+                 href="{{ chip.url }}">{{ chip.label }}</a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="muted">Sin tareas en cola.</p>
+        {% endif %}
+        <div class="section-actions">
+          <a class="btn btn-ghost btn-sm" href="{{ home.tasks_url }}">Ver todas las tareas</a>
+        </div>
+      </section>
 
-    <section class="section">
-      <h2 class="section-title">Arquitectura</h2>
-      {% if architecture_html %}
-        <article class="notion-prose">{{ architecture_html | safe }}</article>
-      {% else %}
-        <p class="muted">Sin arquitectura definida.</p>
-      {% endif %}
-      <a class="btn btn-ghost" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=architecture">Editar arquitectura</a>
-    </section>
+      <section class="home-panel home-panel--docs">
+        <h2 class="section-title">Documentación</h2>
+        <p class="home-stat-line">{{ home.docs_label }}</p>
+        {% if home.local_docs_count %}
+          <p class="home-stat-line muted">{{ home.local_docs_count }} documento{{ 's' if home.local_docs_count != 1 else '' }} local{{ 'es' if home.local_docs_count != 1 else '' }}</p>
+        {% endif %}
+        <div class="section-actions">
+          <a class="btn btn-ghost btn-sm" href="{{ home.docs_url }}">Abrir documentación</a>
+        </div>
+      </section>
+    </div>
 
-    <section class="section">
+    <section class="section home-section--highlight">
       <h2 class="section-title">Siguiente en cola</h2>
-      {% if project.ready_tasks %}
+      {% if home.next_task %}
         <div class="task-row">
-          <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&filter=active&task_id={{ project.ready_tasks[0].task_id }}">{{ project.ready_tasks[0].description }}</a>
-          <div class="badge-group">{{ task_metric_badges(project.ready_tasks[0]) }}</div>
+          <a href="{{ home.next_task.url }}">{{ home.next_task.task.description }}</a>
+          <div class="badge-group">{{ task_metric_badges(home.next_task.task) }}</div>
         </div>
         <div class="section-actions">
-          <a class="btn btn-primary" href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}">Ver tareas</a>
+          <a class="btn btn-primary" href="{{ home.next_task.url }}">Abrir tarea</a>
+          <a class="btn btn-ghost" href="{{ home.tasks_url }}">Ver tareas</a>
         </div>
       {% else %}
-        <p class="muted">Sin tareas ready.</p>
+        <p class="muted">Sin tareas listas.</p>
+        <div class="section-actions">
+          <a class="btn btn-ghost" href="{{ home.tasks_url }}">Ir a tareas</a>
+        </div>
       {% endif %}
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">Cola</h2>
-      <div class="pill-row">
-        {% for key, count in queue_items %}
-          <span class="{{ pill_class_for_task_state(key) }}">{{ pill_label(key) }} {{ count }}</span>
-        {% else %}
-          <span class="muted">Sin tareas en cola.</span>
-        {% endfor %}
-      </div>
     </section>
 
     <section class="section">
       <h2 class="section-title">Recientes</h2>
-      {% for task in recent_tasks %}
+      {% for link in home.recent_tasks %}
         <div class="task-row">
-          <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&task_id={{ task.task_id }}">{{ task.description }}</a>
-          <div class="badge-group">{{ task_metric_badges(task) }}</div>
+          <a href="{{ link.url }}">{{ link.task.description }}</a>
+          <div class="badge-group">{{ task_metric_badges(link.task) }}</div>
         </div>
       {% else %}
         <p class="muted">Sin tareas recientes.</p>
       {% endfor %}
     </section>
 
-    <section class="section">
-      <h2 class="section-title">Documentación</h2>
-      <p>{{ project.audits|length }} audit{{ 's' if project.audits|length != 1 else '' }}</p>
-      <a class="btn btn-ghost" href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}">Abrir documentación</a>
-    </section>
+    <div class="home-columns">
+      <section class="section home-column">
+        <h2 class="section-title">Propósito</h2>
+        {% if purpose_html %}
+          <article class="notion-prose home-prose-preview">{{ purpose_html | safe }}</article>
+        {% else %}
+          <p class="muted">Sin propósito definido.</p>
+        {% endif %}
+        <a class="btn btn-ghost btn-sm" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=purpose">Editar propósito</a>
+      </section>
+
+      <section class="section home-column">
+        <h2 class="section-title">Arquitectura</h2>
+        {% if architecture_html %}
+          <article class="notion-prose home-prose-preview">{{ architecture_html | safe }}</article>
+        {% else %}
+          <p class="muted">Sin arquitectura definida.</p>
+        {% endif %}
+        <a class="btn btn-ghost btn-sm" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=architecture">Editar arquitectura</a>
+      </section>
+    </div>
+
+    <details class="section section--onboarding" id="onboarding">
+      <summary class="section-title onboarding-summary">Primeros pasos</summary>
+      <p class="section-body muted">Onboarding del hub — no hace falta leer el README completo para empezar.</p>
+      <ol class="onboarding-steps">
+        <li>
+          <strong>Instalar</strong>
+          <code>./capinstall install --cursor --opencode</code>
+        </li>
+        <li>
+          <strong>Verificar</strong>
+          <code>./capinstall verify --json</code>
+        </li>
+        <li>
+          <strong>Abrir el hub</strong>
+          <code>capiforge web</code> — adopta proyectos extra con <em>+ Añadir proyecto</em> y usa el selector de proyecto arriba.
+        </li>
+        <li>
+          <strong>Indexar documentación</strong>
+          <code>python3 scripts/index_local_docs.py</code> — luego abre <a href="{{ home.docs_url }}">Documentación</a>.
+        </li>
+      </ol>
+      <div class="onboarding-links">
+        <a class="btn btn-ghost btn-sm" href="{{ home.docs_url }}">Ver auditorías y docs</a>
+        <span class="muted">Skills: <code>capiforge-publish-milestone</code> · contrato en <code>AGENTS.md</code> · demo <code>docs/demo-v04.md</code></span>
+      </div>
+    </details>
   {% endif %}
 </section>
 {% endblock %}

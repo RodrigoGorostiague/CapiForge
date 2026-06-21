@@ -16,7 +16,7 @@ from textual.widgets.option_list import Option
 
 from runtime.paths import asset_path, dev_repo_root, default_repo_root
 from runtime.installer.state import detect_capiforge_bin, detect_existing_state, load_state
-from runtime.tui.splash import SPLASH_DURATION_SECONDS, SplashContent, build_splash_content, load_splash_art
+from runtime.shared.splash import SPLASH_DURATION_SECONDS, SplashContent, build_splash_content, load_splash_art
 from runtime.installer.core import (
     InstallOptions,
     InstallerError,
@@ -32,7 +32,6 @@ class InstallDraft:
     cursor: bool = True
     opencode: bool = False
     repo_root: str = ""
-    install_tui_extra: bool = True
 
 
 @dataclass
@@ -108,7 +107,7 @@ def _main_menu_options() -> list[Option]:
         Option("Verify", id="verify"),
     ]
     if _capiforge_installed():
-        options.append(Option("Open CapiForge TUI", id="capiforge-tui"))
+        options.append(Option("Open CapiForge Web", id="capiforge-web"))
     options.append(Option("Quit", id="quit"))
     return options
 
@@ -203,8 +202,8 @@ class MainMenuScreen(MenuScreen):
             self.app.push_screen(UninstallOptionsScreen(UninstallDraft()))
         elif option_id == "verify":
             self.app.push_screen(ConfirmActionScreen("verify"))
-        elif option_id == "capiforge-tui":
-            self.app.request_product_tui_launch()
+        elif option_id == "capiforge-web":
+            self.app.request_product_web_launch()
         elif option_id == "quit":
             self.app.exit(0)
 
@@ -215,7 +214,7 @@ class IntegrationsScreen(MenuScreen):
     def __init__(self, draft: InstallDraft) -> None:
         super().__init__(
             title="Install · Integrations",
-            subtitle="Step 1 of 4 · Where will you use CapiForge?",
+            subtitle="Step 1 of 3 · Where will you use CapiForge?",
             hint="↑↓ navigate · Space toggle · Enter on Continue · Esc back",
         )
         self.draft = draft
@@ -264,7 +263,7 @@ class RepoRootScreen(MenuScreen):
     def __init__(self, draft: InstallDraft) -> None:
         super().__init__(
             title="Install · Repository",
-            subtitle="Step 2 of 4 · Which repo should CapiForge bootstrap?",
+            subtitle="Step 2 of 3 · Which repo should CapiForge bootstrap?",
             hint="Edit path below · Enter continue · Esc back",
         )
         self.draft = draft
@@ -307,44 +306,14 @@ class RepoRootScreen(MenuScreen):
             self.notify("Repository path is required.", severity="warning")
             return
         self.draft.repo_root = repo_root
-        self.app.push_screen(TuiExtraScreen(self.draft))
-
-
-class TuiExtraScreen(MenuScreen):
-    def __init__(self, draft: InstallDraft) -> None:
-        super().__init__(
-            title="Install · Options",
-            subtitle="Step 3 of 4 · Include the optional terminal UI?",
-            hint="↑↓ navigate · Enter select · Esc back",
-        )
-        self.draft = draft
-
-    def _populate_options(self) -> None:
-        yes = self.draft.install_tui_extra
-        self.set_options(
-            [
-                Option(_toggle_label(yes, "Yes — install Textual TUI extra"), id="yes"),
-                Option(_toggle_label(not yes, "No — CLI only"), id="no"),
-                Option("Continue →", id="continue"),
-            ]
-        )
-
-    def handle_option(self, option_id: str) -> None:
-        if option_id == "yes":
-            self.draft.install_tui_extra = True
-            self._populate_options()
-        elif option_id == "no":
-            self.draft.install_tui_extra = False
-            self._populate_options()
-        elif option_id == "continue":
-            self.app.push_screen(InstallConfirmScreen(self.draft))
+        self.app.push_screen(InstallConfirmScreen(self.draft))
 
 
 class InstallConfirmScreen(MenuScreen):
     def __init__(self, draft: InstallDraft) -> None:
         super().__init__(
             title="Install · Confirm",
-            subtitle="Step 4 of 4 · Review and start installation",
+            subtitle="Step 3 of 3 · Review and start installation",
             hint="↑↓ navigate · Enter select · Esc back",
         )
         self.draft = draft
@@ -359,10 +328,9 @@ class InstallConfirmScreen(MenuScreen):
             [
                 f"Integrations: {', '.join(targets)}",
                 f"Repository: {self.draft.repo_root}",
-                f"TUI extra: {'yes' if self.draft.install_tui_extra else 'no'}",
             ]
         )
-        self.query_one(".installer-subtitle", Static).update(f"Step 4 of 4 · Review\n{summary}")
+        self.query_one(".installer-subtitle", Static).update(f"Step 3 of 3 · Review\n{summary}")
         self.set_options(
             [
                 Option("Start installation", id="start"),
@@ -410,7 +378,6 @@ class InstallProgressScreen(Screen):
             checkout_root=CHECKOUT_ROOT,
             repo_root=Path(self.draft.repo_root),
             targets=targets,
-            install_tui_extra=self.draft.install_tui_extra,
         )
         try:
             state = run_install(options)
@@ -620,8 +587,8 @@ class UninstallProgressScreen(Screen):
             log.update(f"Uninstall failed:\n\n{exc}\n\nEsc to go back.")
 
 
-class ProductTuiLaunchScreen(Screen):
-    """Brief ASCII splash before handing off to capiforge tui."""
+class ProductWebLaunchScreen(Screen):
+    """Brief ASCII splash before handing off to capiforge web."""
 
     BINDINGS = [
         Binding("escape", "launch_now", "Skip", show=False),
@@ -631,7 +598,7 @@ class ProductTuiLaunchScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Vertical(
             Static(id="launch-splash"),
-            Static("Opening CapiForge TUI…  Enter to skip", classes="installer-hint launch-splash-hint"),
+            Static("Opening CapiForge Web…  Enter to skip", classes="installer-hint launch-splash-hint"),
             classes="installer-shell launch-splash-shell",
         )
 
@@ -656,14 +623,14 @@ class ProductTuiLaunchScreen(Screen):
         widget.update("\n".join(splash.lines) if splash.lines else "CapiForge")
 
     def _launch_now(self) -> None:
-        if getattr(self.app, "launch_product_tui", False):
+        if getattr(self.app, "launch_product_web", False):
             return
-        self.app.launch_product_tui = True
+        self.app.launch_product_web = True
         self.app.exit(0)
 
 
 class InstallerApp(App):
-    launch_product_tui = False
+    launch_product_web = False
 
     CSS = """
     Screen {
@@ -773,11 +740,11 @@ class InstallerApp(App):
 
     BINDINGS = [Binding("q", "quit", "Quit")]
 
-    def request_product_tui_launch(self) -> None:
+    def request_product_web_launch(self) -> None:
         if not _capiforge_installed():
             self.notify("capiforge is not installed yet.", severity="warning")
             return
-        self.push_screen(ProductTuiLaunchScreen())
+        self.push_screen(ProductWebLaunchScreen())
 
     def return_to_main_menu(self, message: str | None = None) -> None:
         while self.screen_stack and not isinstance(self.screen, MainMenuScreen):
@@ -793,7 +760,7 @@ class InstallerApp(App):
         self.push_screen(MainMenuScreen())
 
 
-def _launch_product_tui() -> int:
+def _launch_product_web() -> int:
     capiforge_bin = _resolve_capiforge_bin()
     if not capiforge_bin:
         print("capiforge is not installed.", file=sys.stderr)
@@ -805,7 +772,7 @@ def _launch_product_tui() -> int:
         if env.get("PYTHONPATH"):
             pythonpath = f"{pythonpath}{os.pathsep}{env['PYTHONPATH']}"
         env["PYTHONPATH"] = pythonpath
-    os.execvpe(capiforge_bin, [capiforge_bin, "tui"], env)
+    os.execvpe(capiforge_bin, [capiforge_bin, "web"], env)
     return 1
 
 
@@ -820,8 +787,8 @@ def main(argv: list[str] | None = None) -> int:
     build_parser().parse_args(list(argv) if argv is not None else None)
     app = InstallerApp()
     result = app.run()
-    if app.launch_product_tui:
-        return _launch_product_tui()
+    if app.launch_product_web:
+        return _launch_product_web()
     return 0 if result is None else result
 
 

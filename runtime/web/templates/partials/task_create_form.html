@@ -24,7 +24,7 @@
         <label class="field-label" for="task-priority">Prioridad</label>
         <select class="field-input" id="task-priority" name="priority">
           {% for option in priority_options %}
-            <option value="{{ option }}"{% if option == selected_priority %} selected{% endif %}>{{ option }}</option>
+            <option value="{{ option }}"{% if option == selected_priority %} selected{% endif %}>{{ pill_label(option) }}</option>
           {% endfor %}
         </select>
       </div>
@@ -32,7 +32,7 @@
         <label class="field-label" for="task-type">Tipo</label>
         <select class="field-input" id="task-type" name="task_type">
           {% for option in task_type_options %}
-            <option value="{{ option }}"{% if option == selected_task_type %} selected{% endif %}>{{ option }}</option>
+            <option value="{{ option }}"{% if option == selected_task_type %} selected{% endif %}>{{ pill_label(option) }}</option>
           {% endfor %}
         </select>
       </div>
@@ -40,7 +40,7 @@
         <label class="field-label" for="task-state">Estado inicial</label>
         <select class="field-input" id="task-state" name="initial_state">
           {% for option in initial_state_options %}
-            <option value="{{ option }}"{% if option == selected_initial_state %} selected{% endif %}>{{ option }}</option>
+            <option value="{{ option }}"{% if option == selected_initial_state %} selected{% endif %}>{{ pill_label(option) }}</option>
           {% endfor %}
         </select>
       </div>

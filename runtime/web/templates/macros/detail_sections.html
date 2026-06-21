@@ -1,0 +1,59 @@
+{% from "macros/task_detail_rows.html" import detail_pill_row %}
+{% macro render_detail_sections(sections, project) %}
+  {% for section in sections %}
+    <div class="detail-block">
+      <h3 class="detail-block-title">{{ section.title }}</h3>
+
+      {% if section.rows %}
+        <dl class="detail-dl">
+          {% for row in section.rows %}
+            <dt>{{ row.label }}</dt>
+            <dd>
+              {% if row.kind == 'pill' %}
+                {{ detail_pill_row(row) }}
+              {% elif row.kind == 'code' %}
+                <code class="detail-code">{{ row.value }}</code>
+              {% else %}
+                {{ row.value }}
+              {% endif %}
+            </dd>
+          {% endfor %}
+        </dl>
+      {% endif %}
+
+      {% if section.summary %}
+        <p class="detail-prose">{{ section.summary }}</p>
+      {% endif %}
+
+      {% if section.bullets %}
+        <ul class="detail-list">
+          {% for item in section.bullets %}
+            <li><code class="detail-code">{{ item }}</code></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+
+      {% if section.audit_id %}
+        <p class="detail-audit-link-row">
+          <a class="audit-link" href="/docs?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&audit_id={{ section.audit_id }}">
+            {{ section.audit_title }}
+          </a>
+          {% if section.audit_state %}
+            <span class="{{ pill_class_for_audit_state(section.audit_state) }}">{{ pill_label(section.audit_state) }}</span>
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if section.linked_tasks %}
+        <ul class="detail-task-links">
+          {% for task in section.linked_tasks %}
+            <li class="detail-task-link-row">
+              <a href="/tasks?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&task_id={{ task.task_id }}">{{ task.description }}</a>
+              <span class="{{ pill_class_for_task_state(task.state) }}">{{ pill_label(task.state) }}</span>
+            </li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endmacro %}

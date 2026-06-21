@@ -17,7 +17,7 @@ INSTALL_SH = REPO_ROOT / "scripts" / "install.sh"
 class InstallShTest(unittest.TestCase):
     def test_update_command_is_forwarded_before_checkout_root(self) -> None:
         completed = subprocess.run(
-            ["bash", str(INSTALL_SH), "--no-tui-ui", "update", "--json"],
+            ["bash", str(INSTALL_SH), "--no-wizard", "update", "--json"],
             cwd=REPO_ROOT,
             env={**os.environ, "PYTHONPATH": str(REPO_ROOT)},
             capture_output=True,
@@ -287,7 +287,7 @@ class InstallerCoreTest(unittest.TestCase):
 
 
 try:
-    from runtime.installer.tui import ConfirmActionScreen, InstallerApp, MainMenuScreen, ProductTuiLaunchScreen, _launch_splash_content, _main_menu_options
+    from runtime.installer.tui import ConfirmActionScreen, InstallerApp, MainMenuScreen, ProductWebLaunchScreen, _launch_splash_content, _main_menu_options
     from textual.widgets import OptionList, Static
 except ModuleNotFoundError:
     ConfirmActionScreen = None
@@ -350,7 +350,7 @@ class InstallerTuiSmokeTest(unittest.IsolatedAsyncioTestCase):
         app = InstallerApp()
         async with app.run_test(size=(100, 40)) as pilot:
             await pilot.pause()
-            app.push_screen(ProductTuiLaunchScreen())
+            app.push_screen(ProductWebLaunchScreen())
             await pilot.pause()
             splash = app.screen.query_one("#launch-splash", Static)
             rendered = str(splash.render())
@@ -364,15 +364,15 @@ class InstallerMenuOptionsTest(unittest.TestCase):
         self.assertEqual(content.mode, "ascii")
         self.assertTrue(content.lines)
 
-    def test_capiforge_tui_option_when_binary_present(self) -> None:
+    def test_capiforge_web_option_when_binary_present(self) -> None:
         with patch("runtime.installer.tui._resolve_capiforge_bin", return_value="/tmp/capiforge"):
             option_ids = [option.id for option in _main_menu_options()]
-        self.assertIn("capiforge-tui", option_ids)
+        self.assertIn("capiforge-web", option_ids)
 
-    def test_capiforge_tui_option_hidden_without_binary(self) -> None:
+    def test_capiforge_web_option_hidden_without_binary(self) -> None:
         with patch("runtime.installer.tui._resolve_capiforge_bin", return_value=None):
             option_ids = [option.id for option in _main_menu_options()]
-        self.assertNotIn("capiforge-tui", option_ids)
+        self.assertNotIn("capiforge-web", option_ids)
 
 
 if __name__ == "__main__":

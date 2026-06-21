@@ -112,7 +112,7 @@ class DebIntegrationTest(unittest.TestCase):
             status = _run_json([capiforge, "status", *bootstrap_args], env=env, cwd=project)
             self.assertEqual(status.get("data", {}).get("bootstrap_state"), "adopted")
 
-            verify = _run_json([capinstall, "--no-tui-ui", "verify", "--json"], env=env, cwd=project)
+            verify = _run_json([capinstall, "--no-wizard", "verify", "--json"], env=env, cwd=project)
             self.assertTrue(verify.get("ok"), msg=str(verify.get("issues")))
 
 

@@ -123,13 +123,18 @@ class WebAppTest(unittest.TestCase):
         self.assertIn("CapiForge", response.text)
         self.assertIn('class="sidebar-brand-version">v0.4.0</span>', response.text)
         self.assertIn("Ship the web UI", response.text)
+        self.assertIn("home-dashboard", response.text)
+        self.assertIn("Estado del proyecto", response.text)
+        self.assertIn("home-queue-chip", response.text)
+        self.assertIn("Primeros pasos", response.text)
+        self.assertIn("index_local_docs.py", response.text)
 
     def test_tasks_page_renders(self) -> None:
         client, _repo = self._adopted_client()
         response = client.get("/tasks")
         self.assertEqual(response.status_code, 200)
         self.assertIn("Ship the web UI", response.text)
-        self.assertIn("Claim", response.text)
+        self.assertIn("Reclamar", response.text)
         self.assertIn("Nueva tarea", response.text)
         self.assertIn('id="tasks-panel"', response.text)
         self.assertIn("hx-get=", response.text)
@@ -283,6 +288,9 @@ class WebAppTest(unittest.TestCase):
         self.assertIn("task-row-link", response.text)
         self.assertIn("task_id=tsk_web", response.text)
         self.assertIn('id="task-detail"', response.text)
+        self.assertIn("detail-dl", response.text)
+        self.assertIn("Atributos", response.text)
+        self.assertIn("Identificador", response.text)
         self.assertIn("is-selected", response.text)
 
     def test_add_project_form_partial(self) -> None:
@@ -324,6 +332,36 @@ class WebAppTest(unittest.TestCase):
         self.assertIn("expanded_ws=", response.text)
         self.assertIn("sidebar-chevron", response.text)
 
+    def test_project_switcher_preserves_route(self) -> None:
+        client, hub_repo = self._adopted_client()
+        home = client.get("/")
+        workspace_id = home.text.split("add-project-form?workspace_id=")[1].split('"')[0]
+        hub_project_id = home.text.split('name="project_id" value="')[1].split('"')[0] if 'name="project_id" value="' in home.text else home.text.split("project_id=")[1].split("&")[0]
+
+        new_folder = hub_repo.parent / "switch-target"
+        new_folder.mkdir(exist_ok=True)
+        adopt = client.post(
+            "/api/projects/adopt-folder",
+            data={"workspace_id": workspace_id, "folder_path": str(new_folder)},
+            follow_redirects=False,
+        )
+        self.assertIn(adopt.status_code, {200, 303})
+
+        tasks = client.get("/tasks")
+        self.assertIn("project-switcher-select", tasks.text)
+        self.assertIn("switch-target", tasks.text)
+        self.assertIn("/tasks?project_id=", tasks.text)
+
+        docs = client.get(f"/docs?project_id={hub_project_id}&workspace_id={workspace_id}")
+        self.assertEqual(docs.status_code, 200)
+        self.assertIn("project-switcher-select", docs.text)
+
+    def test_active_project_repo_in_subtitle(self) -> None:
+        client, repo_root = self._adopted_client()
+        response = client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(str(repo_root.resolve()), response.text)
+
     def test_task_action_htmx_returns_toast_and_panel(self) -> None:
         client, _repo = self._adopted_client()
         list_response = client.get("/tasks")
@@ -349,6 +387,35 @@ class WebAppTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("Web Audit", response.text)
         self.assertIn("<strong>world</strong>", response.text)
+
+    def test_docs_page_rewrites_relative_markdown_links(self) -> None:
+        client, repo_root = self._adopted_client()
+        parent = repo_root / "docs" / "audits" / "audit-v04-expanded-hub.md"
+        parent.parent.mkdir(parents=True, exist_ok=True)
+        parent.write_text("# Parent\n\nExpanded hub.", encoding="utf-8")
+        bootstrap = NodeBootstrap(repo_root=repo_root)
+        adopted = bootstrap.adopt_repo()
+        store = NodeStore.from_file(adopted.node_db_path)
+        self.addCleanup(store.close)
+        store.create_audit(
+            "aud_child",
+            adopted.adopted_project["project_id"],
+            "published",
+            "Child audit",
+            "**Parent:** [audit-v04-expanded-hub.md](audit-v04-expanded-hub.md)",
+        )
+        store.db.commit()
+        list_response = client.get("/docs")
+        project_id = list_response.text.split("project_id=")[1].split("&")[0]
+        workspace_id = list_response.text.split("workspace_id=")[1].split('"')[0]
+        response = client.get(f"/docs?project_id={project_id}&workspace_id={workspace_id}&audit_id=aud_child")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("doc_path=docs%2Faudits%2Faudit-v04-expanded-hub.md", response.text)
+        follow = client.get(
+            f"/docs?project_id={project_id}&workspace_id={workspace_id}&doc_path=docs/audits/audit-v04-expanded-hub.md"
+        )
+        self.assertEqual(follow.status_code, 200)
+        self.assertIn("Expanded hub", follow.text)
 
     def test_local_document_viewer_renders_repo_file(self) -> None:
         client, repo_root = self._adopted_client()

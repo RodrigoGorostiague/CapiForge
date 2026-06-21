@@ -10,7 +10,7 @@
 
 - `assets/capiforge-icons/capiforge_logo_original_transparente.png` is the default README/GitHub branding asset for light surfaces.
 - `assets/capiforge-icons/capiforge_logo_invertido_transparente.png` is preserved for dark-background Git and project-branding uses.
-- `assets/capiforge-icons/capiforge-ascii.txt` is kept in-project for future TUI/app graphics so the terminal presentation can reuse the same brand set later.
+- `assets/capiforge-icons/capiforge-ascii.txt` is used by the installer splash and branding.
 
 ## Module Layout
 
@@ -76,7 +76,7 @@ In an interactive terminal, `./capinstall` opens a **Textual wizard** with:
 - **Update** — refresh the installed binary and all registered integrations
 - **Uninstall** — remove the binary, MCP entries, and installer state
 - **Verify** — health check without changes
-- **Open CapiForge TUI** — launch `capiforge tui` when the binary is present
+- **Open CapiForge Web** — launch `capiforge web` when the binary is present
 
 CLI/automation mode:
 
@@ -85,7 +85,7 @@ CLI/automation mode:
 ./capinstall update
 ./capinstall uninstall
 ./capinstall verify --json
-./capinstall --no-tui-ui verify
+./capinstall --no-wizard verify
 ```
 
 The installer verifies Python 3.11+, installs into an isolated tool environment (preferring `uv`, with `pipx` as a fallback), bootstraps the repo (`init` → `adopt`), and writes MCP integration config for the targets you select.
@@ -120,7 +120,6 @@ Manual editable install remains supported:
 python3 -m pip install -e .
 capiforge --version
 capiforge mcp --help
-capiforge tui
 capiforge web
 ```
 
@@ -177,13 +176,12 @@ capiforge tasks ready
 capiforge tasks claim --task-id tsk_123 --plan "Implement the requested change"
 capiforge audit create --title "Brief title" --content-file docs/audits/audit-v01-agent-coordination.md
 capiforge audit publish --audit-id aud_example
-capiforge tui
 capiforge web
 ```
 
 #### Web UI
 
-The web UI complements the terminal UI with a Notion-style browser experience for dashboards, task tables, audit markdown, and lifecycle actions.
+The web hub is the primary human surface: Notion-style browser experience for dashboards, task tables, audit markdown, and lifecycle actions.
 
 Install with the optional `[web]` extra:
 

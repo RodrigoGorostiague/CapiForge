@@ -92,13 +92,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("status", help="Read bootstrap status as a JSON envelope")
     subparsers.add_parser("read", help="Read deterministic project data as a JSON envelope")
     subparsers.add_parser("current", help="Read the adopted project summary as a JSON envelope")
-    tui_parser = subparsers.add_parser("tui", help="Open the CapiForge terminal UI")
-    tui_parser.add_argument("--repo-root")
-    tui_parser.add_argument("--node-home")
-    tui_parser.add_argument("--as-of")
-    tui_parser.add_argument("--theme", choices=("neon", "notion", "light"))
-    tui_parser.add_argument("--auto-refresh", type=int, choices=(0, 15, 30, 60))
-    web_parser = subparsers.add_parser("web", help="Open the CapiForge web UI in your browser")
+    web_parser = subparsers.add_parser("web", help="Open the CapiForge web hub in your browser")
     web_parser.add_argument("--repo-root")
     web_parser.add_argument("--node-home")
     web_parser.add_argument("--as-of")
@@ -119,23 +113,6 @@ def _handle_web(argv: Sequence[str]) -> int:
         print(web_deps_install_hint(), file=sys.stderr)
         return 1
     return web_main(argv, prog="capiforge web")
-
-
-def _handle_tui(argv: Sequence[str]) -> int:
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        print("The TUI requires an interactive terminal.", file=sys.stderr)
-        return 1
-    try:
-        from runtime.tui.shell import main as tui_main
-    except ImportError:
-        print(
-            "TUI dependencies are missing. Reinstall with the optional [tui] extra:\n"
-            "  uv tool install --reinstall --editable '.[tui]' --directory <repo>\n"
-            "  or: pip install -e '.[tui]'",
-            file=sys.stderr,
-        )
-        return 1
-    return tui_main(argv, prog="capiforge tui")
 
 
 def _handle_mcp_serve(argv: Sequence[str]) -> int:
@@ -178,11 +155,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _handle_audit(raw_argv)
     if raw_argv and raw_argv[0] == "tasks":
         return _handle_tasks(raw_argv)
-    if raw_argv and raw_argv[0] == "tui":
-        if "-h" in raw_argv[1:] or "--help" in raw_argv[1:]:
-            _build_parser().parse_args(raw_argv)
-            return 0
-        return _handle_tui(raw_argv[1:])
     if raw_argv and raw_argv[0] == "web":
         if "-h" in raw_argv[1:] or "--help" in raw_argv[1:]:
             _build_parser().parse_args(raw_argv)
@@ -193,8 +165,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(raw_argv)
     if args.command == "mcp":
         parser.parse_args(["mcp", "--help"])
-    if args.command == "tui":
-        return _handle_tui(raw_argv[1:])
     if args.command == "web":
         return _handle_web(raw_argv[1:])
     parser.print_help()

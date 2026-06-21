@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from runtime.tui.data import AppSnapshot, NavState, ViewName
+from runtime.hub.data import AppSnapshot, NavState, ViewName
 
 NavNodeKind = Literal["action", "workspace", "project", "page"]
 

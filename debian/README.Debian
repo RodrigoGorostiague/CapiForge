@@ -5,8 +5,9 @@ Supported platforms
 -------------------
 
 Primary PPA target: Ubuntu 24.04 (noble) with `python3-textual` from Ubuntu
-Universe. Ubuntu 22.04 (jammy) may require a companion `python3-textual`
-package in the same PPA when the archive version is too old for CapiForge TUI.
+Universe (required for the `capinstall` wizard). Ubuntu 22.04 (jammy) may
+require a companion `python3-textual` package in the same PPA when the
+archive version is too old for the installer wizard.
 
 Build locally
 -------------

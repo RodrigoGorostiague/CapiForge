@@ -14,8 +14,8 @@ from runtime.node.store import NodeStore
 from runtime.shared.contracts import JustificationPayload
 from runtime.shared.errors import SurfaceError
 from runtime.shared.ids import ActorIdentity, canonical_id
-from runtime.tui.data import LOCAL_AGENT_ID, LOCAL_SESSION_ID, slugify_name
-from runtime.tui.task_fields import TASK_FIELD_DB_COLUMN, TASK_FIELD_OPTIONS
+from runtime.hub.data import HUB_AGENT_ID, HUB_SESSION_ID, LOCAL_AGENT_ID, LOCAL_SESSION_ID, slugify_name
+from runtime.hub.task_fields import TASK_FIELD_DB_COLUMN, TASK_FIELD_OPTIONS
 
 LOCK_TIMEOUT_SECONDS = 30.0
 WEB_AGENT_ID = "capiforge-web"
@@ -151,7 +151,7 @@ def create_task(
     audit_id: str | None = None,
     agent_id: str = LOCAL_AGENT_ID,
     session_id: str = LOCAL_SESSION_ID,
-    source: str = "tui",
+    source: str = "hub",
 ) -> ActionResult:
     cleaned_description = description.strip()
     if not cleaned_description:
@@ -159,7 +159,7 @@ def create_task(
     field_error = _validate_create_task_fields(priority=priority, task_type=task_type, initial_state=initial_state)
     if field_error is not None:
         return field_error
-    source_label = "web UI" if source == "web" else "TUI"
+    source_label = "web UI" if source == "web" else "hub"
 
     def _callback(_bootstrap, store, surface, actor, _as_of) -> ActionResult:
         if not store.get_project(project_id):
@@ -200,7 +200,7 @@ def _default_justification(summary: str) -> JustificationPayload:
     return JustificationPayload(
         summary=summary,
         evidence_refs=("tui://action",),
-        expected_impact="Advance task lifecycle from the TUI",
+        expected_impact="Advance task lifecycle from the hub",
     )
 
 
@@ -210,7 +210,7 @@ def claim_task(
     node_home: str | Path | None,
     project_id: str,
     task_id: str,
-    plan: str = "Claimed from TUI",
+    plan: str = "Claimed from hub",
     agent_id: str = LOCAL_AGENT_ID,
     session_id: str = LOCAL_SESSION_ID,
 ) -> ActionResult:
@@ -286,14 +286,14 @@ def transition_task(
         resolved_metadata.setdefault("active_claim_session_id", actor.session_id)
         resolved_metadata.setdefault("as_of", as_of)
         if requested_state == "blocked":
-            resolved_metadata.setdefault("blocked_reason", "Blocked from TUI")
-            resolved_metadata.setdefault("blocked_evidence", "tui://blocked")
+            resolved_metadata.setdefault("blocked_reason", "Blocked from hub")
+            resolved_metadata.setdefault("blocked_evidence", "hub://blocked")
             resolved_metadata.setdefault("blocked_next_step", "Unblock when ready")
         if requested_state == "done":
-            resolved_metadata.setdefault("done_result", "Completed from TUI")
-            resolved_metadata.setdefault("done_artifacts", "tui://done")
-            resolved_metadata.setdefault("done_references", "tui://done")
-            resolved_metadata.setdefault("done_expected_impact", "Task completed via TUI")
+            resolved_metadata.setdefault("done_result", "Completed from hub")
+            resolved_metadata.setdefault("done_artifacts", "hub://done")
+            resolved_metadata.setdefault("done_references", "hub://done")
+            resolved_metadata.setdefault("done_expected_impact", "Task completed via hub")
         mutation_id = f"mut_tui_{uuid4().hex[:12]}"
         surface.tasks_transition(
             project_id=project_id,
