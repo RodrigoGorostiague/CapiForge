@@ -11,6 +11,7 @@ OPENCODE_AUTOMATION_SKILL_NAME = "capiforge-record-completed-work"
 OPENCODE_AUTOMATION_SKILL_FILENAME = "SKILL.md"
 CURSOR_SKILLS_DIRNAME = "skills"
 CAPIFORGE_SKILL_NAMES = (
+    "capiforge-publish-milestone",
     "capiforge-pickup-task",
     "capiforge-start-task",
     "capiforge-close-task",

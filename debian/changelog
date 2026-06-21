@@ -1,3 +1,11 @@
+capiforge (0.3.0-1) unstable; urgency=medium
+
+  * MVP v0.3 documentation hub: project_pages schema, web hub UI, milestone skill.
+  * Schema user_version 2 with project_pages (purpose, architecture).
+  * capiforge-publish-milestone and capiforge-data-layer in apt share skills.
+
+ -- CapiForge Maintainers <maintainers@capiforge.dev>  Sat, 21 Jun 2026 17:00:00 +0000
+
 capiforge (0.1.0-1) unstable; urgency=medium
 
   * Initial Debian packaging for apt/PPA distribution.

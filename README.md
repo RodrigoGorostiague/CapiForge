@@ -30,8 +30,30 @@ V1 keeps the coordinator thin and non-authoritative. Each project has exactly on
 
 ## Owner-Local Bootstrap CLI (V1.1)
 
-Architecture and agent-coordination kickoff: [docs/architecture-v01.md](docs/architecture-v01.md)  
-MVP acceptance checklist: [docs/mvp.md](docs/mvp.md)
+Architecture and product direction (v0.3): [docs/architecture-v01.md](docs/architecture-v01.md)  
+**MVP v0.3 checklist (documentation hub):** [docs/mvp-v03.md](docs/mvp-v03.md)  
+Coordination MVP v0.2 checklist: [docs/mvp.md](docs/mvp.md)
+
+### Quick start (developer checkout)
+
+From a fresh clone:
+
+```bash
+./capinstall install --cursor --opencode --non-interactive
+./capinstall verify --json
+capiforge web
+```
+
+`capiforge web` opens the **project hub**: purpose, architecture, tasks, and audits. Edit pages from the home screen or `/project-page`.
+
+After pulling changes:
+
+```bash
+./capinstall update
+./capinstall verify --json
+```
+
+Agent skills installed to `<repo>/.cursor/skills/` include **`capiforge-publish-milestone`** (default: publish to CapiForge only at milestones, not per micro-task). See [AGENTS.md](AGENTS.md).
 
 ### Install the canonical `capiforge` command
 

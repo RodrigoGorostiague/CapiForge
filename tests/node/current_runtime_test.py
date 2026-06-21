@@ -441,7 +441,7 @@ class TasksReconcileStartIntegrationTest(unittest.TestCase):
         self.assertEqual(started["state"], "in_progress")
         self.assertTrue(started["created_task"])
         user_version, columns = self._read_owner_local_schema_state()
-        self.assertEqual(user_version, 1)
+        self.assertEqual(user_version, 2)
         self.assertIn("lifecycle_key", columns)
 
         finished = tasks_reconcile_finish(

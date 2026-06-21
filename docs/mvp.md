@@ -1,5 +1,7 @@
 # CapiForge MVP — Acceptance Checklist
 
+> **v0.3 documentation hub:** see [mvp-v03.md](mvp-v03.md). This file documents the **v0.2 coordination MVP**, which remains supported.
+
 Use this checklist to confirm owner-local agent coordination is **MVP-ready** for a single adopted repository.
 
 ## Operator checklist (human)

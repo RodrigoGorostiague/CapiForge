@@ -10,7 +10,22 @@ UNSET = object()
 from runtime.paths import asset_path, schema_path
 
 DEFAULT_NODE_SCHEMA_PATH = schema_path("node-schema.sql")
-OWNER_LOCAL_SCHEMA_VERSION = 1
+OWNER_LOCAL_SCHEMA_VERSION = 2
+
+PROJECT_PAGES_CANONICAL_INDEX = "idx_project_pages_canonical_type"
+PROJECT_PAGES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS project_pages (
+  page_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+  page_type TEXT NOT NULL CHECK (page_type IN ('purpose', 'architecture', 'custom')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_pages_canonical_type
+ON project_pages(project_id, page_type)
+WHERE page_type IN ('purpose', 'architecture');
+"""
 TASKS_LIFECYCLE_KEY_INDEX = "idx_tasks_project_lifecycle_key"
 TASKS_LIFECYCLE_KEY_INDEX_SQL = (
     "CREATE UNIQUE INDEX idx_tasks_project_lifecycle_key "
@@ -89,7 +104,14 @@ def _migrate_owner_local_schema(connection: sqlite3.Connection) -> None:
     lifecycle_key_missing = "lifecycle_key" not in tasks_columns
     index_needs_repair = existing_index_sql != expected_index_sql
 
-    if not lifecycle_key_missing and not index_needs_repair and current_version == OWNER_LOCAL_SCHEMA_VERSION:
+    project_pages_missing = not _table_columns(connection, "project_pages")
+
+    if (
+        not lifecycle_key_missing
+        and not index_needs_repair
+        and not project_pages_missing
+        and current_version == OWNER_LOCAL_SCHEMA_VERSION
+    ):
         return
 
     try:
@@ -100,6 +122,8 @@ def _migrate_owner_local_schema(connection: sqlite3.Connection) -> None:
             if existing_index_sql:
                 connection.execute(f"DROP INDEX {TASKS_LIFECYCLE_KEY_INDEX}")
             connection.execute(TASKS_LIFECYCLE_KEY_INDEX_SQL)
+        if project_pages_missing:
+            connection.executescript(PROJECT_PAGES_TABLE_SQL)
         connection.execute(f"PRAGMA user_version = {OWNER_LOCAL_SCHEMA_VERSION}")
         connection.commit()
     except sqlite3.DatabaseError as exc:
@@ -356,6 +380,49 @@ class NodeStore:
             (project_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_project_pages(self, project_id: str) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT page_id, project_id, page_type, title, content, updated_at "
+            "FROM project_pages WHERE project_id = ? "
+            "ORDER BY CASE page_type WHEN 'purpose' THEN 1 WHEN 'architecture' THEN 2 ELSE 3 END, title",
+            (project_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_project_page(self, project_id: str, page_type: str) -> dict | None:
+        row = self.db.execute(
+            "SELECT page_id, project_id, page_type, title, content, updated_at "
+            "FROM project_pages WHERE project_id = ? AND page_type = ?",
+            (project_id, page_type),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_project_page(
+        self,
+        *,
+        page_id: str,
+        project_id: str,
+        page_type: str,
+        title: str,
+        content: str,
+        updated_at: str,
+    ) -> dict:
+        existing = self.get_project_page(project_id, page_type) if page_type in {"purpose", "architecture"} else None
+        resolved_page_id = existing["page_id"] if existing else page_id
+        self.db.execute(
+            """
+            INSERT INTO project_pages (page_id, project_id, page_type, title, content, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(page_id) DO UPDATE SET
+              title = excluded.title,
+              content = excluded.content,
+              updated_at = excluded.updated_at
+            """,
+            (resolved_page_id, project_id, page_type, title, content, updated_at),
+        )
+        row = self.db.execute("SELECT * FROM project_pages WHERE page_id = ?", (resolved_page_id,)).fetchone()
+        return dict(row)
 
     def list_tasks_for_index(self, project_id: str, index_name: str, as_of: str) -> list[dict]:
         filters = {

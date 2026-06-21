@@ -2,25 +2,37 @@
 
 ## Architecture
 
-- Kickoff and v0.1 state: [docs/architecture-v01.md](docs/architecture-v01.md)
-- v0.1 coordination audit: [docs/audits/audit-v01-agent-coordination.md](docs/audits/audit-v01-agent-coordination.md)
+- Product direction (v0.3): [docs/architecture-v01.md](docs/architecture-v01.md)
+- Scope pivot audit: [docs/audits/audit-v03-scope-pivot.md](docs/audits/audit-v03-scope-pivot.md)
+- MVP v0.3 checklist: [docs/mvp-v03.md](docs/mvp-v03.md)
+- Coordination MVP v0.2: [docs/mvp.md](docs/mvp.md)
 
-## Coordination Decision Tree
+## Decision Tree (milestone-first)
 
-| Situation | Skill path |
+| Situation | Skill / path |
 | --- | --- |
-| Work already exists in the ready queue | `capiforge-pickup-task` → `capiforge-start-task` → `capiforge-close-task` |
-| New justified work keyed by `lifecycle_key` | `capiforge-record-completed-work` or manual `audit_create_brief` → `audit_publish` → `tasks_reconcile_start` → `tasks_reconcile_finish` |
-| Need DB/state semantics before acting | `capiforge-data-layer` |
-| Verify MVP readiness or recover from empty queue | [docs/mvp.md](docs/mvp.md) |
+| Normal agent work (default) | **No CapiForge write** — persist in Engram / git / OpenSpec |
+| Milestone: audit, feature close, architecture change | `capiforge-publish-milestone` |
+| Work explicitly assigned from CF ready queue | `capiforge-pickup-task` → `capiforge-start-task` → `capiforge-close-task` |
+| New justified work keyed by `lifecycle_key` | `capiforge-record-completed-work` or manual audit + reconcile |
+| DB / truth-boundary semantics | `capiforge-data-layer` |
+| Human review of project state | `capiforge web` (primary surface) |
+| Verify MVP readiness | [docs/mvp-v03.md](docs/mvp-v03.md) |
+
+## What NOT to put in CapiForge
+
+- Per micro-task session notes → **Engram**
+- OpenSpec change proposals and specs → **`openspec/`**
+- Exploratory context that does not change project purpose, architecture, audits, or task state
 
 ## Project Skills
 
-- `skills/capiforge-data-layer/SKILL.md` — Load first when agents need the SQLite contract, task states, claim rules, and start/finish update expectations.
-- `skills/capiforge-pickup-task/SKILL.md` — Inspect state, select a ready task, claim it, and summarize the result.
-- `skills/capiforge-start-task/SKILL.md` — Validate a live claim and move the task to `in_progress` via `tasks_transition` or `tasks_reconcile_start`.
-- `skills/capiforge-close-task/SKILL.md` — Validate claim context and close via `tasks_transition` or `tasks_reconcile_finish`.
-- `skills/capiforge-record-completed-work/SKILL.md` — Installed OpenCode automation for the public audit + lifecycle reconcile sequence.
+- `skills/capiforge-publish-milestone/SKILL.md` — **Load first** for agent publication decisions.
+- `skills/capiforge-data-layer/SKILL.md` — SQLite contract, hybrid truth model, claim rules.
+- `skills/capiforge-pickup-task/SKILL.md` — Optional: claim a ready queue task when assigned.
+- `skills/capiforge-start-task/SKILL.md` — Optional: start a claimed queue task.
+- `skills/capiforge-close-task/SKILL.md` — Optional: close a claimed queue task.
+- `skills/capiforge-record-completed-work/SKILL.md` — OpenCode milestone lifecycle automation.
 
 ## MCP Tools (owner-local)
 

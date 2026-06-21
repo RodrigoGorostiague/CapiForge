@@ -24,6 +24,26 @@
     </section>
 
     <section class="section">
+      <h2 class="section-title">Propósito</h2>
+      {% if purpose_html %}
+        <article class="notion-prose">{{ purpose_html | safe }}</article>
+      {% else %}
+        <p class="muted">Sin propósito definido.</p>
+      {% endif %}
+      <a class="btn btn-ghost" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=purpose">Editar propósito</a>
+    </section>
+
+    <section class="section">
+      <h2 class="section-title">Arquitectura</h2>
+      {% if architecture_html %}
+        <article class="notion-prose">{{ architecture_html | safe }}</article>
+      {% else %}
+        <p class="muted">Sin arquitectura definida.</p>
+      {% endif %}
+      <a class="btn btn-ghost" href="/project-page?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}&page_type=architecture">Editar arquitectura</a>
+    </section>
+
+    <section class="section">
       <h2 class="section-title">Siguiente en cola</h2>
       {% if project.ready_tasks %}
         <div class="task-row">

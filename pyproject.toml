@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "capiforge"
-version = "0.1.0"
+version = "0.3.0"
 description = "CapiForge runtime bootstrap and MCP server"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,8 @@ runtime = ["web/templates/**/*", "web/static/*"]
     "assets/capiforge-icons/capiforge-ascii-compact.txt",
 ]
 "share/capiforge/skills/capiforge-close-task" = ["skills/capiforge-close-task/SKILL.md"]
+"share/capiforge/skills/capiforge-data-layer" = ["skills/capiforge-data-layer/SKILL.md"]
+"share/capiforge/skills/capiforge-publish-milestone" = ["skills/capiforge-publish-milestone/SKILL.md"]
 "share/capiforge/skills/capiforge-pickup-task" = ["skills/capiforge-pickup-task/SKILL.md"]
 "share/capiforge/skills/capiforge-start-task" = ["skills/capiforge-start-task/SKILL.md"]
 "share/capiforge/skills/capiforge-record-completed-work" = ["skills/capiforge-record-completed-work/SKILL.md"]

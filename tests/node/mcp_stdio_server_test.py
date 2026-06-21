@@ -978,7 +978,7 @@ class MCPStdioServerSmokeTest(unittest.TestCase):
         self.assertEqual(start_payload["data"]["state"], "in_progress")
         self.assertTrue(start_payload["data"]["created_task"])
         user_version, columns = read_owner_local_schema_state(self.node_home / "node.sqlite3")
-        self.assertEqual(user_version, 1)
+        self.assertEqual(user_version, 2)
         self.assertIn("lifecycle_key", columns)
 
     def test_stdio_server_current_get_reports_schema_compatibility_error_for_unsupported_owner_local_drift(self) -> None:

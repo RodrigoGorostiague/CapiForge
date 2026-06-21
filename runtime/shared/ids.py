@@ -15,6 +15,7 @@ PREFIXES = {
     "node": "node",
     "claim": "clm",
     "route": "rte",
+    "page": "pg",
 }
 
 

@@ -11,7 +11,7 @@ metadata:
 
 ## Activation Contract
 
-Use when a CapiForge task was already picked up and started, implementation is finished, and the orchestrator needs to complete the lifecycle without exposing raw MCP protocol details to the end user.
+Use **only** after queue-assigned work (`pickup` → `start`) is complete. For milestone closes without a claim, use `tasks_reconcile_finish` via `capiforge-publish-milestone` or `capiforge-record-completed-work`.
 
 ## Hard Rules
 

@@ -33,12 +33,25 @@ Use when an orchestrator needs to understand what CapiForge persists, which fiel
 
 | Table | Purpose |
 | --- | --- |
+| `project_pages` | Purpose, architecture, and custom markdown pages |
 | `audits` | Brief findings; states `draft`, `published`, `closed`, `superseded` |
 | `tasks` | Operational work item with state machine and closure metadata |
 | `claim_leases` | Exclusive task leases |
 | `claims_local_cache` | Denormalized active-claim mirror per task |
 | `task_mutations` | Auditable AI/human state-change trail |
 | `project_entrypoints` | Derived queue indexes (`ready`, `blocked`, `done`, etc.) |
+
+## Hybrid truth boundaries
+
+| Content | Canonical source | CapiForge |
+| --- | --- | --- |
+| Purpose, architecture | `project_pages` | Yes — human UI + milestone agent updates |
+| Audits, tasks | SQLite | Yes — milestones and optional queue path |
+| Specs | `openspec/` | Reference only |
+| Agent memory | Engram | Never duplicate |
+| Long-form docs | `docs/` | `local_documents` index only |
+
+Default agent cadence: **milestones only** (`capiforge-publish-milestone`). Queue pickup is optional when work is assigned from the ready queue.
 
 ## Task States
 
@@ -113,6 +126,7 @@ DB CHECK constraints enforce:
 - `storage/node-schema.sql`
 - `contracts/mcp-surface.md`
 - `openspec/specs/task-audit-model/spec.md`
+- `skills/capiforge-publish-milestone/SKILL.md`
 - `skills/capiforge-pickup-task/SKILL.md`
 - `skills/capiforge-start-task/SKILL.md`
 - `skills/capiforge-close-task/SKILL.md`

@@ -11,7 +11,7 @@ metadata:
 
 ## Activation Contract
 
-Use when a CapiForge task was already selected and claimed, and the orchestrator needs to move that exact task into active execution without exposing raw MCP claim protocol details to the end user.
+Use **only** after `capiforge-pickup-task` claimed a ready-queue task. Not for milestone-only workflows.
 
 ## Hard Rules
 

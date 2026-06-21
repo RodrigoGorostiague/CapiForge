@@ -11,7 +11,7 @@ metadata:
 
 ## Activation Contract
 
-Use when an orchestrator needs the next actionable CapiForge task without making the end user name MCP tools or raw queue operations.
+Use **only** when an orchestrator explicitly assigns work from the CapiForge ready queue. For normal agent work, use `capiforge-publish-milestone` at milestones instead — do not claim tasks per micro-task.
 
 ## Hard Rules
 

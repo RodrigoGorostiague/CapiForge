@@ -423,7 +423,7 @@ class BootstrapPersistenceTest(unittest.TestCase):
         self.assertEqual(reopened.state, "adopted")
         self.assertEqual(reopened.adopted_project, adopted.adopted_project)
         user_version, columns = read_owner_local_schema_state(self.bootstrap.node_db_path)
-        self.assertEqual(user_version, 1)
+        self.assertEqual(user_version, 2)
         self.assertIn("lifecycle_key", columns)
 
 
@@ -498,7 +498,7 @@ class BootstrapCliSurfaceTest(unittest.TestCase):
 
     def _assert_owner_local_schema_upgraded(self) -> None:
         user_version, columns = read_owner_local_schema_state(self.node_home / "node.sqlite3")
-        self.assertEqual(user_version, 1)
+        self.assertEqual(user_version, 2)
         self.assertIn("lifecycle_key", columns)
 
     def _seed_active_claim_for_task(self, *, task_id: str, session_id: str, plan: str) -> None:

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="page page--docs">
+  <header class="page-header">
+    {% if header.breadcrumb %}<div class="page-breadcrumb">{{ header.breadcrumb }}</div>{% endif %}
+    <div class="page-title-row">
+      <h1 class="page-title">Editar {{ page_title }}</h1>
+    </div>
+    {% if header.subtitle %}<p class="page-subtitle">{{ header.subtitle }}</p>{% endif %}
+  </header>
+
+  {% if not project %}
+    <div class="empty-state"><p>Selecciona un proyecto para editar páginas.</p></div>
+  {% else %}
+    <form class="page-editor-form" method="post" action="/api/project-page/save">
+      <input type="hidden" name="project_id" value="{{ project.project_id }}">
+      <input type="hidden" name="workspace_id" value="{{ project.workspace_id }}">
+      <input type="hidden" name="page_type" value="{{ page_type }}">
+      <label class="field-label" for="page-title">Título</label>
+      <input id="page-title" class="field-input" type="text" name="title" value="{{ page_title }}">
+      <label class="field-label" for="page-content">Contenido (Markdown)</label>
+      <textarea id="page-content" class="field-input" name="content" rows="24" style="width:100%;min-height:24rem;font-family:inherit;">{{ page_content }}</textarea>
+      <div class="section-actions">
+        <button class="btn btn-primary" type="submit">Guardar</button>
+        <a class="btn btn-ghost" href="/?project_id={{ project.project_id }}&workspace_id={{ project.workspace_id }}">Cancelar</a>
+      </div>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

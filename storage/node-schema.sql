@@ -1,5 +1,5 @@
 PRAGMA foreign_keys = ON;
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 
 CREATE TABLE workspaces (
   workspace_id TEXT PRIMARY KEY,
@@ -157,6 +157,19 @@ CREATE TABLE local_documents (
   storage_path TEXT NOT NULL,
   retention_scope TEXT NOT NULL DEFAULT 'local_only' CHECK (retention_scope = 'local_only')
 );
+
+CREATE TABLE project_pages (
+  page_id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+  page_type TEXT NOT NULL CHECK (page_type IN ('purpose', 'architecture', 'custom')),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX idx_project_pages_canonical_type
+ON project_pages(project_id, page_type)
+WHERE page_type IN ('purpose', 'architecture');
 
 CREATE TABLE project_links (
   source_project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,

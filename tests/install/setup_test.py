@@ -66,6 +66,7 @@ class IntegrationConfigTest(unittest.TestCase):
             repo_root = Path(temp_dir) / "project"
             repo_root.mkdir()
             for skill_name in (
+                "capiforge-publish-milestone",
                 "capiforge-pickup-task",
                 "capiforge-start-task",
                 "capiforge-close-task",

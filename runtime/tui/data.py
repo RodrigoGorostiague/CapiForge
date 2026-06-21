@@ -58,6 +58,15 @@ class LocalDocumentPreview:
 
 
 @dataclass(frozen=True)
+class ProjectPagePreview:
+    page_id: str
+    page_type: str
+    title: str
+    content: str
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
 class ProjectSnapshot:
     project_id: str
     workspace_id: str
@@ -69,6 +78,7 @@ class ProjectSnapshot:
     all_tasks: tuple[TaskPreview, ...] = ()
     audits: tuple[AuditPreview, ...] = ()
     local_documents: tuple[LocalDocumentPreview, ...] = ()
+    project_pages: tuple[ProjectPagePreview, ...] = ()
     sync_summary: str | None = None
     sync_degraded: bool = False
     sync_pending_routes: int = 0
@@ -391,6 +401,16 @@ def load_project_snapshot(
         LocalDocumentPreview(document_id=row["document_id"], storage_path=row["storage_path"])
         for row in store.list_local_documents(project["project_id"])
     )
+    project_pages = tuple(
+        ProjectPagePreview(
+            page_id=row["page_id"],
+            page_type=row["page_type"],
+            title=row["title"],
+            content=row.get("content") or "",
+            updated_at=row.get("updated_at") or "",
+        )
+        for row in store.list_project_pages(project["project_id"])
+    )
 
     sync_summary: str | None = None
     sync_degraded = False
@@ -419,6 +439,7 @@ def load_project_snapshot(
         all_tasks=all_tasks,
         audits=audits,
         local_documents=local_documents,
+        project_pages=project_pages,
         sync_summary=sync_summary,
         sync_degraded=sync_degraded,
         sync_pending_routes=sync_pending_routes,

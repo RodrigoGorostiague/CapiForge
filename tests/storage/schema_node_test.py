@@ -72,8 +72,19 @@ class NodeSchemaTest(unittest.TestCase):
         )
         self.assertIsNone(store.get_task_by_lifecycle_key("prj_1", "lifecycle://agent/other"))
 
+    def test_project_pages_support_canonical_types(self) -> None:
+        self.db.execute(
+            "INSERT INTO project_pages (page_id, project_id, page_type, title, content, updated_at) "
+            "VALUES ('pg_1','prj_1','purpose','Purpose','# Purpose','2026-06-21T00:00:00Z')"
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO project_pages (page_id, project_id, page_type, title, content, updated_at) "
+                "VALUES ('pg_2','prj_1','purpose','Dup','body','2026-06-21T00:00:00Z')"
+            )
+
     def test_canonical_schema_sets_owner_local_user_version(self) -> None:
-        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(self.db.execute("PRAGMA user_version").fetchone()[0], 2)
 
     def test_from_file_repairs_missing_lifecycle_key_and_index_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -154,7 +165,7 @@ class NodeSchemaTest(unittest.TestCase):
             try:
                 columns = [row[1] for row in store.db.execute("PRAGMA table_info(tasks)").fetchall()]
                 self.assertIn("lifecycle_key", columns)
-                self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(store.db.execute("PRAGMA user_version").fetchone()[0], 2)
 
                 index_row = store.db.execute(
                     "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_tasks_project_lifecycle_key'"
@@ -173,7 +184,7 @@ class NodeSchemaTest(unittest.TestCase):
 
             reopened = NodeStore.from_file(db_path)
             try:
-                self.assertEqual(reopened.db.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(reopened.db.execute("PRAGMA user_version").fetchone()[0], 2)
                 columns = [row[1] for row in reopened.db.execute("PRAGMA table_info(tasks)").fetchall()]
                 self.assertIn("lifecycle_key", columns)
             finally:

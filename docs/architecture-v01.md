@@ -1,14 +1,17 @@
-# CapiForge v0.1 — Architecture and Current State
+# CapiForge v0.3 — Architecture and Product Direction
 
 ## Purpose
 
-CapiForge is a local-first runtime that lets multiple AI agents coordinate on the same adopted repository through audits, tasks, exclusive claims, and a deterministic MCP/CLI surface.
+CapiForge is a **local-first project documentation and task hub** for a single owner running multiple AI agents on the same adopted repository. It keeps **purpose**, **architecture**, **audits**, and **task state** current in SQLite with a Notion-style web UI as the primary human surface.
+
+CapiForge is **not** a replacement for Engram (agent session memory) or OpenSpec (specs). Agents publish to CapiForge **only at milestones** to limit token use.
 
 ## High-Level Architecture
 
 ```mermaid
 flowchart TB
-    subgraph clients [Agent Clients]
+    subgraph clients [Clients]
+        Human[Human via Web UI]
         Cursor[Cursor MCP]
         OpenCode[OpenCode MCP]
         CLI[capiforge CLI]
@@ -16,6 +19,7 @@ flowchart TB
     subgraph surface [Product Surface]
         Skills[Project Skills]
         MCP[MCP stdio 14 tools]
+        WebUI[Web UI Notion-style]
         Capinstall[capinstall wizard]
     end
     subgraph runtime [Owner-Local Runtime]
@@ -27,46 +31,74 @@ flowchart TB
     subgraph data [Persistence]
         Bootstrap[bootstrap.json]
         DB[node.sqlite3]
+        Pages[project_pages]
     end
+    subgraph external [External Canonical Sources]
+        Engram[Engram memory]
+        OpenSpec[openspec/ specs]
+        RepoDocs[docs/ long-form]
+    end
+    Human --> WebUI
     clients --> Skills
     clients --> MCP
     clients --> CLI
     Capinstall --> MCP
     Skills --> MCP
+    WebUI --> Current
     MCP --> Current
     CLI --> Current
     Current --> Surface
     Surface --> Store
     Surface --> Claims
     Store --> DB
+    Store --> Pages
     Current --> Bootstrap
+    Cursor -.->|milestones only| MCP
+    Cursor -.->|session memory| Engram
+    Cursor -.->|specs| OpenSpec
+    RepoDocs -.->|index refs| Store
 ```
 
-## V1.1 Bootstrap Path
+## Hybrid truth model
 
-1. `./capinstall install --cursor --opencode` installs the binary, bootstraps `init` → `adopt`, registers MCP, and copies automation skills.
-2. Adopted repo state lives under `.capiforge/node/`.
-3. Canonical writes stay on the owner node; the LAN coordinator remains optional and non-authoritative.
+| Content | Canonical in | CapiForge |
+| --- | --- | --- |
+| Purpose, architecture | `project_pages` table | Editable via web UI; agents update at milestones |
+| Audits | `audits` table | `audit_create_brief` → `audit_publish` at milestones |
+| Tasks | `tasks` table | Milestone creation; UI for human tracking |
+| Specs | `openspec/` | Link via `artifact_refs`; do not duplicate |
+| Agent memory | Engram | Out of scope; never duplicate |
+| Long-form docs | `docs/` in repo | `local_documents` path index |
 
-## Agent Coordination Model
+## Agent publication model
 
-### Path A — Queue pickup (existing ready tasks)
+### Default: milestones only
+
+Agents MUST NOT run pickup → start → close on every micro-task. Use Engram for session persistence and CapiForge only when:
+
+- An audit or review is completed
+- A significant feature or change is closed
+- Architecture documentation changes
+
+### Optional: queue-assigned work
+
+When work is explicitly assigned from the CapiForge ready queue, use Path A (claims + transitions). See [mvp.md](mvp.md) for the v0.2 coordination checklist.
+
+### Path A — Queue pickup
 
 ```
 current_get → tasks_ready_get → tasks_claim → tasks_transition(in_progress)
-→ work → tasks_transition(done|blocked) → optional tasks_claim_renew during work
+→ work → tasks_transition(done|blocked)
 ```
 
-### Path B — Lifecycle reconcile (new justified work)
+### Path B — Lifecycle reconcile (milestones / new work)
 
 ```
 audit_create_brief → audit_publish → tasks_reconcile_start(lifecycle_key)
 → work → tasks_reconcile_finish
 ```
 
-Use Path B when the work item does not exist yet or must be keyed by `lifecycle_key`.
-
-## MCP Surface (v0.1)
+## MCP Surface
 
 | Category | Tools |
 | --- | --- |
@@ -81,39 +113,44 @@ Session identity is derived per MCP client (`clientInfo`) or overridden with `CA
 
 | Skill | Role |
 | --- | --- |
-| `capiforge-pickup-task` | Select and claim a ready task |
-| `capiforge-start-task` | Move a claimed task to `in_progress` |
-| `capiforge-close-task` | Close a task with required metadata |
-| `capiforge-data-layer` | Explain DB layout and update rules |
-| `capiforge-record-completed-work` | OpenCode lifecycle automation contract |
+| `capiforge-publish-milestone` | **Primary** — when and how agents publish at milestones |
+| `capiforge-data-layer` | SQLite contract and hybrid truth boundaries |
+| `capiforge-pickup-task` | Optional — claim from ready queue when assigned |
+| `capiforge-start-task` | Optional — start claimed queue task |
+| `capiforge-close-task` | Optional — close claimed queue task |
+| `capiforge-record-completed-work` | OpenCode milestone lifecycle automation |
 
-## Current State (2026-06-19 audit)
+## Current State (2026-06-21)
 
 | Area | Status |
 | --- | --- |
-| Domain model + schema | Beta-ready |
-| MCP pickup/start/close | Implemented via `tasks_transition` |
-| Lifecycle reconcile | Implemented and tested |
-| Install automation | OpenCode + Cursor skill delivery via `capinstall` |
-| Multi-agent isolation | Per-client MCP session IDs; lease renewal exposed |
-| Coordinator LAN | Implemented but not required for owner-local V1.1 |
+| Coordination MVP v0.2 | Complete |
+| Scope pivot audit v0.3 | Published |
+| `project_pages` schema | v0.3 — purpose, architecture |
+| Web UI hub | Purpose/architecture on home; markdown editor |
+| Multi-user / sync / BI | Future — coordinator exists but frozen for MVP |
 
-## First Audit
+## Audits
 
-The v0.1 coordination audit is published as `aud_5fb52505c5d5563e` with seven derived ready tasks keyed under `audit/v0.1/*`. See [audit-v01-agent-coordination.md](audits/audit-v01-agent-coordination.md).
+- v0.1 coordination: [audit-v01-agent-coordination.md](audits/audit-v01-agent-coordination.md)
+- v0.2 MVP status: [audit-v02-mvp-status.md](audits/audit-v02-mvp-status.md)
+- v0.3 scope pivot: [audit-v03-scope-pivot.md](audits/audit-v03-scope-pivot.md)
 
 ## Getting Started
 
 ```bash
 ./capinstall install --cursor --opencode --non-interactive
+capiforge web
 capiforge current
-capiforge tasks ready
 ```
 
-Load `AGENTS.md` and the relevant skill before coordinating work. Use `skills/capiforge-data-layer/SKILL.md` when you need persistence semantics. Use [docs/mvp.md](mvp.md) to verify MVP readiness.
+Load `AGENTS.md` and `capiforge-publish-milestone` before agent work. Use [mvp-v03.md](mvp-v03.md) to verify MVP v0.3 readiness.
 
-## Multi-agent notes
+## Future vision (post-MVP)
 
-- MCP assigns a distinct `session_id` per client (`clientInfo` hash).
-- Renew long claims with `tasks_claim_renew` every 3–4 minutes (default lease: 5 minutes).
-- Only one active claim per task; a second session receives `CLAIM_CONFLICT`.
+- Multi-user workspaces with invitations
+- LAN coordinator sync for multi-machine owners
+- Admin dashboards and BI across projects
+- Developer onboarding from the live project hub
+
+Coordinator LAN code remains in-tree but is not required for MVP v0.3.
